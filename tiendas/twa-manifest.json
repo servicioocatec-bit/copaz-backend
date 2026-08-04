@@ -1,0 +1,28 @@
+{
+  "packageId": "app.copaz.twa",
+  "host": "TU-DOMINIO-AQUI.com",
+  "name": "Copaz",
+  "launcherName": "Copaz",
+  "display": "standalone",
+  "themeColor": "#0d9488",
+  "themeColorDark": "#0f766e",
+  "navigationColor": "#0d9488",
+  "backgroundColor": "#f7f9fb",
+  "enableNotifications": true,
+  "startUrl": "/index.html",
+  "iconUrl": "https://TU-DOMINIO-AQUI.com/icons/icon-512.png",
+  "maskableIconUrl": "https://TU-DOMINIO-AQUI.com/icons/icon-maskable-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": { "path": "./android.keystore", "alias": "copaz" },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [
+    { "name": "Calendario", "url": "/index.html#/calendario" },
+    { "name": "Gastos", "url": "/index.html#/gastos" },
+    { "name": "Mensajes", "url": "/index.html#/mensajes" }
+  ],
+  "orientation": "portrait",
+  "fallbackType": "customtabs",
+  "features": {},
+  "generatorApp": "bubblewrap-cli"
+}
