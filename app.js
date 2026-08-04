@@ -210,6 +210,7 @@ function render() {
   if (Store.mode === 'cloud') {
     if (!Cloud.token) { nav.classList.add('hidden'); return renderAuth('welcome'); }
     if (!Store.state) { nav.classList.add('hidden'); return renderLoading(); }
+    if (D().kids.length === 0 && !localStorage.getItem('copaz.setupDone')) { nav.classList.add('hidden'); return renderSetup(); }
   } else {
     if (!Store.state || !Store.state.family) { nav.classList.add('hidden'); return renderOnboarding(); }
   }
@@ -222,8 +223,14 @@ function render() {
 function renderLoading() { $('#app').innerHTML = `<div class="ob"><div class="empty"><div class="ic">🕊️</div><p>Cargando tu espacio…</p></div></div>`; }
 function renderNav() {
   const r = currentRoute();
+  const lastSeen = +(localStorage.getItem('copaz.msgSeen') || 0);
+  const unread = (D().messages || []).filter(m => m.from !== meRole() && m.ts > lastSeen).length;
   const items = [['inicio','🏠','Inicio'],['calendario','📅','Calendario'],['gastos','💰','Gastos'],['mensajes','💬','Mensajes'],['hijos','🧒','Hijos']];
-  $('#nav').innerHTML = items.map(([id, ic, l]) => `<a href="#/${id}" class="${r===id?'active':''}"><span class="ic">${ic}</span>${l}</a>`).join('');
+  $('#nav').innerHTML = items.map(([id, ic, l]) => {
+    const dot = (id === 'mensajes' && unread > 0)
+      ? `<span style="position:absolute;top:3px;left:calc(50% + 6px);min-width:16px;height:16px;padding:0 4px;background:var(--rose);color:#fff;font-size:10px;font-weight:700;border-radius:99px;display:grid;place-items:center">${unread}</span>` : '';
+    return `<a href="#/${id}" class="${r===id?'active':''}" style="position:relative"><span class="ic">${ic}</span>${l}${dot}</a>`;
+  }).join('');
 }
 function topbar(title, sub, actions = '') {
   return `<header class="topbar"><div class="topbar-inner">
@@ -353,6 +360,50 @@ function renderInvite(code) {
       <div style="font-size:34px;font-weight:800;letter-spacing:.15em;color:var(--teal-700);margin-top:6px">${esc(code)}</div></div>
     <button class="btn block" onclick="go('inicio');render()">Entrar a Copaz</button>
   </div>`;
+}
+
+/* Configuración guiada la primera vez (modo nube, familia vacía) */
+function renderSetup() {
+  const yo = (D().auth.name || 'Yo').split(' ')[0];
+  $('#app').innerHTML = `<div class="ob" style="justify-content:flex-start;padding-top:30px">
+    ${LOGO}<h1 style="font-size:24px">Hola, ${esc(yo)} 👋</h1>
+    <p class="tag">Configuremos tu familia en 20 segundos. Podrás cambiar todo después.</p>
+    <div style="text-align:left;margin-top:22px">
+      <div class="field"><label>Nombre del otro padre / madre</label><input id="su-b" placeholder="Ej. Ana"></div>
+      <div class="field"><label>Nombres de tus hijos <span class="hint">(separados por coma)</span></label>
+        <input id="su-k" placeholder="Ej. Sofía, Mateo"></div>
+      <div class="field"><label>Esquema de custodia</label>
+        <select id="su-s">
+          <option value="semanal">Semana sí / semana no</option>
+          <option value="2-2-3" selected>2-2-3 (alterna fines de semana)</option>
+          <option value="2-2-5-5">2-2-5-5</option>
+          <option value="3-4-4-3">3-4-4-3</option>
+          <option value="alterna">Día por medio</option>
+        </select></div>
+      <div class="field"><label>¿Quién tiene a los niños primero este mes?</label>
+        <div class="seg" id="su-first"><button data-v="A" class="on">Yo</button><button data-v="B">El otro padre/madre</button></div></div>
+      <div class="field"><label>Moneda</label>
+        <select id="su-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+      <button class="btn block" id="su-go">Guardar y continuar</button>
+      <button class="btn ghost block" id="su-skip" style="margin-top:10px">Saltar por ahora</button>
+    </div></div>`;
+  segBind('#su-first');
+  $('#su-skip').onclick = () => { localStorage.setItem('copaz.setupDone', '1'); go('inicio'); render(); };
+  $('#su-go').onclick = () => act(async () => {
+    const b = $('#su-b').value.trim();
+    const kids = ($('#su-k').value.trim() || '').split(',').map(s => s.trim()).filter(Boolean);
+    const d = new Date();
+    await Store.patchFamily({
+      parents: { A: D().auth.name || nombre('A'), B: b || 'Otro padre/madre' },
+      currency: $('#su-cur').value,
+      schedule: { type: $('#su-s').value, start: iso(new Date(d.getFullYear(), d.getMonth(), 1)), startParent: segVal('#su-first') },
+    });
+    for (let i = 0; i < kids.length; i++) {
+      await Store.create('kids', { name: kids[i], dob:'', school:'', grade:'', allergies:'', meds:'', doctor:'', bloodType:'', emergency:'', notes:'', color: ['#0d9488','#f97316','#2563eb','#e11d48'][i % 4] });
+    }
+    localStorage.setItem('copaz.setupDone', '1');
+    go('inicio'); render(); toast('¡Familia configurada! 🎉');
+  });
 }
 
 /* =============================== INICIO =============================== */
@@ -539,10 +590,24 @@ function viewGastos(app) {
   const cls = bal > 0.5 ? 'pos' : bal < -0.5 ? 'neg' : 'zero';
   const txt = bal > 0.5 ? `${esc(nombre('B'))} le debe a ${esc(nombre('A'))}` : bal < -0.5 ? `${esc(nombre('A'))} le debe a ${esc(nombre('B'))}` : 'Están al corriente';
   const items = [...D().expenses].sort((a,b) => b.date.localeCompare(a.date));
+  const mp = today().slice(0, 7);
+  const mes = D().expenses.filter(e => e.date.startsWith(mp));
+  const totalMes = mes.reduce((s, e) => s + e.amount, 0);
+  const porCat = {}; mes.forEach(e => porCat[e.cat] = (porCat[e.cat] || 0) + e.amount);
+  const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const resumen = totalMes > 0 ? `<div class="card">
+      <div style="font-size:12px;color:var(--slate);text-transform:uppercase;letter-spacing:.05em">Gasto de ${MESES[new Date().getMonth()]}</div>
+      <div style="font-size:24px;font-weight:800;letter-spacing:-.02em">${money(totalMes)}</div>
+      <div style="margin-top:12px;display:flex;flex-direction:column;gap:9px">
+      ${cats.map(([c, v]) => { const pct = Math.round(v / totalMes * 100); return `<div>
+        <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="font-weight:600">${esc(c)}</span><span style="color:var(--slate)">${money(v)} · ${pct}%</span></div>
+        <div style="height:6px;background:var(--line);border-radius:99px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--teal-500)"></div></div></div>`; }).join('')}
+      </div></div>` : '';
   app.innerHTML = topbar('Gastos', 'Compartidos y reembolsos') + `<div class="screen">
     <div class="balance ${cls}"><div class="l">Balance actual</div><div class="v">${money(Math.abs(bal))}</div>
       <div style="opacity:.92;font-size:13.5px;margin-top:2px">${txt}</div></div>
     ${bal !== 0 ? `<button class="btn block ghost" onclick="saldarTodo()" style="margin-bottom:14px">Marcar todo como saldado</button>` : ''}
+    ${resumen}
     <div class="section-title">Movimientos <span class="count">${items.length}</span></div>
     <div class="card">${items.length ? items.map(gastoRow).join('') : `<div class="empty"><div class="ic">🧾</div><p>Aún no hay gastos</p></div>`}</div></div>
     <button class="fab" onclick="modalGasto()">＋</button>`;
@@ -605,6 +670,9 @@ function viewMensajes(app) {
       <div class="time">${new Date(m.ts).toLocaleString('es-MX',{ day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit' })}</div></div>`;
   }).join('');
   setTimeout(() => wrap.scrollIntoView({ block: 'end' }), 0);
+  // marcar como leídos
+  localStorage.setItem('copaz.msgSeen', String(Date.now()));
+  renderNav();
   const input = $('#msg-in'), tone = $('#tone');
   input.oninput = () => {
     input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 120) + 'px';
