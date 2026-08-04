@@ -13,7 +13,7 @@ const CONFIG = {
   // DÉJALO VACÍO ('') para usar la app en modo local (un solo dispositivo,
   // sin necesidad de backend). En cuanto pongas aquí tu URL de Railway,
   // la app pasa a modo nube: login y sincronización entre los dos padres.
-  API_BASE: '',
+  API_BASE: 'https://copaz-backend-production.up.railway.app',
 };
 
 const Cloud = {
