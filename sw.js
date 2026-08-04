@@ -1,5 +1,5 @@
 /* Copaz service worker — cache offline (solo recursos de la app). */
-const CACHE = 'copaz-v3';
+const CACHE = 'copaz-v4';
 const ASSETS = [
   './', './index.html', './app.css', './app.js', './api-client.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',

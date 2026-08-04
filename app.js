@@ -541,28 +541,34 @@ function modalDia(s) {
       <div class="avatar" style="background:${color(who)}">${inicial(nombre(who))}</div>
       <div class="body"><div class="t">Con ${esc(nombre(who))}</div><div class="s">Esquema ${etiquetaEsquema(F().schedule.type)}</div></div></div></div>
     ${evs.length ? evs.map(e => `<div class="list-row"><div class="avatar" style="background:#94a3b8">📌</div>
-      <div class="body"><div class="t">${esc(e.title)}</div><div class="s">${e.time || 'Todo el día'} · ${esc(nombre(e.who))}</div></div>
-      <button class="btn sm ghost" onclick="delEvento('${e.id}')">Borrar</button></div>`).join('') : `<p class="hint" style="margin-bottom:14px">Sin eventos este día.</p>`}
+      <div class="body" style="cursor:pointer" onclick="modalEvento('${e.date}','${e.id}')"><div class="t">${esc(e.title)}</div><div class="s">${e.time || 'Todo el día'} · ${esc(nombre(e.who))}</div></div>
+      <button class="btn sm ghost" onclick="modalEvento('${e.date}','${e.id}')">Editar</button></div>`).join('') : `<p class="hint" style="margin-bottom:14px">Sin eventos este día.</p>`}
     <button class="btn block" onclick="modalEvento('${s}')">＋ Añadir evento</button>
     <button class="btn block ghost" style="margin-top:10px" onclick="modalProponerSwap('${s}')">🔄 Proponer intercambio</button>`);
 }
-function modalEvento(fecha) {
-  const kidsOpts = D().kids.map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join('');
-  openSheet('Nuevo evento', `
-    <div class="field"><label>Título</label><input id="ev-t" placeholder="Ej. Consulta pediatra"></div>
-    <div class="row2"><div class="field"><label>Fecha</label><input id="ev-d" type="date" value="${fecha || today()}"></div>
-      <div class="field"><label>Hora</label><input id="ev-h" type="time"></div></div>
+function modalEvento(fecha, id) {
+  const ev = id ? D().events.find(x => x.id === id) : null;
+  const kidsOpts = D().kids.map(k => `<option value="${k.id}"${ev && ev.kid === k.id ? ' selected' : ''}>${esc(k.name)}</option>`).join('');
+  const who = ev ? ev.who : 'A';
+  openSheet(ev ? 'Editar evento' : 'Nuevo evento', `
+    <div class="field"><label>Título</label><input id="ev-t" placeholder="Ej. Consulta pediatra" value="${ev ? esc(ev.title) : ''}"></div>
+    <div class="row2"><div class="field"><label>Fecha</label><input id="ev-d" type="date" value="${ev ? ev.date : (fecha || today())}"></div>
+      <div class="field"><label>Hora</label><input id="ev-h" type="time" value="${ev ? ev.time : ''}"></div></div>
     <div class="field"><label>¿De qué hijo/a?</label><select id="ev-k">${kidsOpts}</select></div>
     <div class="field"><label>¿Quién lleva/asiste?</label><div class="seg" id="ev-who">
-      <button data-v="A" class="on">${esc(nombre('A'))}</button><button data-v="B">${esc(nombre('B'))}</button><button data-v="both">Ambos</button></div></div>
-    <div class="field"><label>Nota</label><textarea id="ev-n" placeholder="Detalles, dirección, qué llevar…"></textarea></div>
-    <button class="btn block" id="ev-save">Guardar evento</button>`);
+      <button data-v="A" class="${who==='A'?'on':''}">${esc(nombre('A'))}</button><button data-v="B" class="${who==='B'?'on':''}">${esc(nombre('B'))}</button><button data-v="both" class="${who==='both'?'on':''}">Ambos</button></div></div>
+    <div class="field"><label>Nota</label><textarea id="ev-n" placeholder="Detalles, dirección, qué llevar…">${ev ? esc(ev.note || '') : ''}</textarea></div>
+    <button class="btn block" id="ev-save">${ev ? 'Guardar cambios' : 'Guardar evento'}</button>
+    ${ev ? `<button class="btn block outline" id="ev-del" style="margin-top:10px">Eliminar evento</button>` : ''}`);
   segBind('#ev-who');
   $('#ev-save').onclick = () => act(async () => {
     const title = $('#ev-t').value.trim(); if (!title) return toast('Escribe un título');
-    await Store.create('events', { title, date: $('#ev-d').value, time: $('#ev-h').value, kid: $('#ev-k').value, who: segVal('#ev-who'), note: $('#ev-n').value.trim() });
-    closeSheet(); render(); toast('Evento guardado');
+    const data = { title, date: $('#ev-d').value, time: $('#ev-h').value, kid: $('#ev-k').value, who: segVal('#ev-who'), note: $('#ev-n').value.trim() };
+    if (ev) await Store.update('events', id, data); else await Store.create('events', data);
+    closeSheet(); render(); toast(ev ? 'Evento actualizado' : 'Evento guardado');
   });
+  const del = $('#ev-del');
+  if (del) del.onclick = () => act(async () => { await Store.remove('events', id); closeSheet(); render(); toast('Evento eliminado'); });
 }
 const delEvento = (id) => act(async () => { await Store.remove('events', id); closeSheet(); render(); toast('Evento eliminado'); });
 function modalEsquema() {
@@ -595,15 +601,19 @@ function viewGastos(app) {
   const totalMes = mes.reduce((s, e) => s + e.amount, 0);
   const porCat = {}; mes.forEach(e => porCat[e.cat] = (porCat[e.cat] || 0) + e.amount);
   const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
+  const pagA = mes.filter(e => e.payer === 'A').reduce((s, e) => s + e.amount, 0);
+  const pagB = mes.filter(e => e.payer === 'B').reduce((s, e) => s + e.amount, 0);
   const resumen = totalMes > 0 ? `<div class="card">
       <div style="font-size:12px;color:var(--slate);text-transform:uppercase;letter-spacing:.05em">Gasto de ${MESES[new Date().getMonth()]}</div>
       <div style="font-size:24px;font-weight:800;letter-spacing:-.02em">${money(totalMes)}</div>
+      <div style="font-size:12.5px;color:var(--slate);margin-top:3px">${esc(nombre('A'))} pagó ${money(pagA)} · ${esc(nombre('B'))} pagó ${money(pagB)}</div>
       <div style="margin-top:12px;display:flex;flex-direction:column;gap:9px">
       ${cats.map(([c, v]) => { const pct = Math.round(v / totalMes * 100); return `<div>
         <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="font-weight:600">${esc(c)}</span><span style="color:var(--slate)">${money(v)} · ${pct}%</span></div>
         <div style="height:6px;background:var(--line);border-radius:99px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--teal-500)"></div></div></div>`; }).join('')}
       </div></div>` : '';
-  app.innerHTML = topbar('Gastos', 'Compartidos y reembolsos') + `<div class="screen">
+  app.innerHTML = topbar('Gastos', 'Compartidos y reembolsos',
+    items.length ? `<button class="icon-btn" onclick="exportarGastosCSV()" title="Exportar a CSV">⬇️</button>` : '') + `<div class="screen">
     <div class="balance ${cls}"><div class="l">Balance actual</div><div class="v">${money(Math.abs(bal))}</div>
       <div style="opacity:.92;font-size:13.5px;margin-top:2px">${txt}</div></div>
     ${bal !== 0 ? `<button class="btn block ghost" onclick="saldarTodo()" style="margin-bottom:14px">Marcar todo como saldado</button>` : ''}
@@ -615,27 +625,31 @@ function viewGastos(app) {
 function gastoRow(e) {
   const kid = D().kids.find(k => k.id === e.kid), debeOtro = e.amount * (1 - e.split / 100);
   return `<div class="list-row"><div class="avatar" style="background:${color(e.payer)}">${inicial(nombre(e.payer))}</div>
-    <div class="body"><div class="t">${esc(e.title)} ${e.settled ? '<span class="badge green">saldado</span>' : ''}</div>
+    <div class="body" style="cursor:pointer" onclick="modalGasto('${e.id}')"><div class="t">${esc(e.title)} ${e.settled ? '<span class="badge green">saldado</span>' : ''}</div>
       <div class="s">${fechaLarga(e.date)} · ${esc(e.cat)}${kid ? ' · '+esc(kid.name) : ''} · pagó ${esc(nombre(e.payer))}</div></div>
     <div class="meta"><div style="font-weight:800;color:var(--ink);font-size:15px">${money(e.amount)}</div>
       <div style="font-size:11.5px">${e.settled ? '' : `${esc(nombre(e.payer==='A'?'B':'A'))} debe ${money(debeOtro)}`}</div>
       ${e.settled ? '' : `<button class="btn sm ghost" style="margin-top:4px" onclick="saldar('${e.id}')">Saldar</button>`}</div></div>`;
 }
-function modalGasto() {
-  const kidsOpts = `<option value="">— General —</option>` + D().kids.map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join('');
-  openSheet('Nuevo gasto', `
-    <div class="field"><label>Concepto</label><input id="gx-t" placeholder="Ej. Colegiatura, consulta…"></div>
-    <div class="row2"><div class="field"><label>Monto</label><input id="gx-a" type="number" inputmode="decimal" placeholder="0.00"></div>
-      <div class="field"><label>Fecha</label><input id="gx-d" type="date" value="${today()}"></div></div>
+function modalGasto(id) {
+  const e = id ? D().expenses.find(x => x.id === id) : null;
+  const cats = ['Educación','Salud','Ropa','Alimentación','Actividades','Transporte','Otro'];
+  const kidsOpts = `<option value="">— General —</option>` + D().kids.map(k => `<option value="${k.id}"${e && e.kid === k.id ? ' selected' : ''}>${esc(k.name)}</option>`).join('');
+  const split = e ? e.split : 50;
+  openSheet(e ? 'Editar gasto' : 'Nuevo gasto', `
+    <div class="field"><label>Concepto</label><input id="gx-t" placeholder="Ej. Colegiatura, consulta…" value="${e ? esc(e.title) : ''}"></div>
+    <div class="row2"><div class="field"><label>Monto</label><input id="gx-a" type="number" inputmode="decimal" placeholder="0.00" value="${e ? e.amount : ''}"></div>
+      <div class="field"><label>Fecha</label><input id="gx-d" type="date" value="${e ? e.date : today()}"></div></div>
     <div class="field"><label>¿Quién pagó?</label><div class="seg" id="gx-p">
-      <button data-v="A" class="on">${esc(nombre('A'))}</button><button data-v="B">${esc(nombre('B'))}</button></div></div>
+      <button data-v="A" class="${!e || e.payer === 'A' ? 'on' : ''}">${esc(nombre('A'))}</button><button data-v="B" class="${e && e.payer === 'B' ? 'on' : ''}">${esc(nombre('B'))}</button></div></div>
     <div class="row2"><div class="field"><label>Categoría</label>
-      <select id="gx-c"><option>Educación</option><option>Salud</option><option>Ropa</option><option>Alimentación</option><option>Actividades</option><option>Transporte</option><option>Otro</option></select></div>
+      <select id="gx-c">${cats.map(c => `<option${e && e.cat === c ? ' selected' : ''}>${c}</option>`).join('')}</select></div>
       <div class="field"><label>Hijo/a</label><select id="gx-k">${kidsOpts}</select></div></div>
-    <div class="field"><label>División <span class="hint" id="gx-splitlbl">50% / 50%</span></label>
-      <input id="gx-s" type="range" min="0" max="100" step="5" value="50">
+    <div class="field"><label>División <span class="hint" id="gx-splitlbl">${split}% / ${100 - split}%</span></label>
+      <input id="gx-s" type="range" min="0" max="100" step="5" value="${split}">
       <div class="hint">Porcentaje que le corresponde a quien pagó. El resto lo debe el otro.</div></div>
-    <button class="btn block" id="gx-save">Guardar gasto</button>`);
+    <button class="btn block" id="gx-save">${e ? 'Guardar cambios' : 'Guardar gasto'}</button>
+    ${e ? `<button class="btn block outline" id="gx-del" style="margin-top:10px">Eliminar gasto</button>` : ''}`);
   segBind('#gx-p');
   const rng = $('#gx-s'), lbl = $('#gx-splitlbl');
   rng.oninput = () => { lbl.textContent = `${rng.value}% / ${100 - rng.value}%`; };
@@ -643,9 +657,23 @@ function modalGasto() {
     const title = $('#gx-t').value.trim(), amount = parseFloat($('#gx-a').value);
     if (!title) return toast('Escribe el concepto');
     if (!amount || amount <= 0) return toast('Escribe un monto válido');
-    await Store.create('expenses', { title, amount, date: $('#gx-d').value, payer: segVal('#gx-p'), split: parseInt(rng.value, 10), cat: $('#gx-c').value, kid: $('#gx-k').value, settled: false });
-    closeSheet(); render(); toast('Gasto registrado');
+    const data = { title, amount, date: $('#gx-d').value, payer: segVal('#gx-p'), split: parseInt(rng.value, 10), cat: $('#gx-c').value, kid: $('#gx-k').value, settled: e ? e.settled : false };
+    if (e) await Store.update('expenses', id, data); else await Store.create('expenses', data);
+    closeSheet(); render(); toast(e ? 'Gasto actualizado' : 'Gasto registrado');
   });
+  const del = $('#gx-del');
+  if (del) del.onclick = () => act(async () => { await Store.remove('expenses', id); closeSheet(); render(); toast('Gasto eliminado'); });
+}
+function exportarGastosCSV() {
+  const rows = [['Fecha','Concepto','Categoría','Hijo/a','Pagó','Monto','% pagador','Saldado']];
+  [...D().expenses].sort((a,b) => a.date.localeCompare(b.date)).forEach(e => {
+    const kid = D().kids.find(k => k.id === e.kid);
+    rows.push([e.date, e.title, e.cat, kid ? kid.name : '', nombre(e.payer), e.amount, e.split + '%', e.settled ? 'Sí' : 'No']);
+  });
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `copaz-gastos-${today()}.csv`; a.click();
+  URL.revokeObjectURL(a.href); toast('CSV exportado');
 }
 const saldar = (id) => act(async () => { const e = D().expenses.find(x => x.id === id); if (e) { await Store.update('expenses', id, { ...e, settled: true }); render(); toast('Marcado como saldado'); } });
 const saldarTodo = () => act(async () => { for (const e of D().expenses.filter(x => !x.settled)) await Store.update('expenses', e.id, { ...e, settled: true }); render(); toast('Todo saldado ✓'); });
@@ -870,5 +898,5 @@ function segVal(sel) { const on = $(sel + ' button.on'); return on ? on.dataset.
 Object.assign(window, {
   go, renderAuth, calMove, modalDia, modalEvento, delEvento, modalEsquema, modalGasto, saldar, saldarTodo,
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
-  modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje,
+  modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,
 });
