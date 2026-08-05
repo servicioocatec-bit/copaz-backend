@@ -11,8 +11,10 @@ const CONFIG = {
   // Ej: https://copaz-backend-production.up.railway.app
   //
   // DÉJALO VACÍO ('') para usar la app en modo local (un solo dispositivo,
-  // sin necesidad de backend). En cuanto pongas aquí tu URL de Railway,
-  // la app pasa a modo nube: login y sincronización entre los dos padres.
+  // sin necesidad de backend). Con una URL, la app pasa a modo nube:
+  // login y sincronización entre los dos padres.
+  //
+  // ✅ Backend YA desplegado en Railway y conectado:
   API_BASE: 'https://copaz-backend-production.up.railway.app',
 };
 
@@ -56,6 +58,10 @@ const Cloud = {
 
   // --- Mensajes ---
   sendMessage(text) { return this.req('POST', '/api/messages', { text }); },
+
+  // --- Notificaciones push ---
+  vapid()            { return this.req('GET', '/api/push/vapid'); },
+  subscribePush(sub) { return this.req('POST', '/api/push/subscribe', { sub }); },
 
   // --- Tiempo real ---
   connect(onEvent) {

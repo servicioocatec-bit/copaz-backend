@@ -201,7 +201,7 @@ const currentRoute = () => { const h = location.hash.replace('#/', '').split('/'
 const go = (r) => { location.hash = '#/' + r; };
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', boot);
-async function boot() { await Store.init(); render(); }
+async function boot() { await Store.init(); render(); if (localStorage.getItem('copaz.pushOn')) enablePush(false).catch(() => {}); }
 
 /* ================================ RENDER =============================== */
 function render() {
@@ -403,6 +403,7 @@ function renderSetup() {
     }
     localStorage.setItem('copaz.setupDone', '1');
     go('inicio'); render(); toast('¡Familia configurada! 🎉');
+    enablePush(true).catch(() => {});
   });
 }
 
@@ -860,6 +861,7 @@ function modalAjustes() {
     ${f.inviteCode ? `<div class="card tight" style="margin-bottom:14px"><div style="font-size:12px;color:var(--slate);text-transform:uppercase;letter-spacing:.05em">Código de invitación</div>
       <div style="font-size:24px;font-weight:800;letter-spacing:.12em;color:var(--teal-700)">${esc(f.inviteCode)}</div>
       <div class="hint">Compártelo con el otro padre para que se una.</div></div>` : ''}
+    <button class="btn block ghost" onclick="enablePush(true)" style="margin-bottom:10px">🔔 Activar notificaciones</button>
     <button class="btn block outline" onclick="cerrarSesion()" style="margin-bottom:10px">Cerrar sesión</button>` : '';
   openSheet('Ajustes', `
     <div class="field"><label>Tu nombre</label><input id="st-a" value="${esc(f.parents.A || '')}"></div>
@@ -894,8 +896,36 @@ const closeSheet = () => { $('#modal-root').innerHTML = ''; };
 function segBind(sel) { $$(sel + ' button').forEach(b => b.onclick = () => { $$(sel + ' button').forEach(x => x.classList.remove('on')); b.classList.add('on'); }); }
 function segVal(sel) { const on = $(sel + ' button.on'); return on ? on.dataset.v : null; }
 
+/* =========================== NOTIFICACIONES ======================== */
+function urlBase64ToUint8Array(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const base64 = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64); const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+async function enablePush(interactive) {
+  if (!CLOUD) { if (interactive) toast('Disponible con la app en la nube'); return; }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    if (interactive) toast('Este dispositivo no soporta notificaciones'); return;
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { if (interactive) toast('Activa el permiso de notificaciones'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await Cloud.vapid();
+    if (!key) { if (interactive) toast('El servidor aún no tiene push configurado'); return; }
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(key) });
+    await Cloud.subscribePush(sub.toJSON());
+    localStorage.setItem('copaz.pushOn', '1');
+    if (interactive) toast('Notificaciones activadas 🔔');
+  } catch (e) { if (interactive) toast('No se pudo activar: ' + (e.message || '')); }
+}
+
 /* Exponer para onclick inline */
 Object.assign(window, {
+  enablePush,
   go, renderAuth, calMove, modalDia, modalEvento, delEvento, modalEsquema, modalGasto, saldar, saldarTodo,
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
   modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,

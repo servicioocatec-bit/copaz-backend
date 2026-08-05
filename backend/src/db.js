@@ -71,8 +71,20 @@ export async function migrate() {
   await q(`CREATE INDEX IF NOT EXISTS idx_events_fam   ON events(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_expenses_fam ON expenses(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_docs_fam     ON docs(family_id);`);
+  await q(`
+  CREATE TABLE IF NOT EXISTS push_subs (
+    id         TEXT PRIMARY KEY,
+    family_id  TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    role       TEXT NOT NULL,
+    endpoint   TEXT UNIQUE NOT NULL,
+    sub        JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now()
+  );`);
+
   await q(`CREATE INDEX IF NOT EXISTS idx_swaps_fam    ON swaps(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_msg_fam      ON messages(family_id);`);
+  await q(`CREATE INDEX IF NOT EXISTS idx_push_fam     ON push_subs(family_id);`);
 }
 
 /* Devuelve el estado completo de una familia (lo que consume el frontend). */

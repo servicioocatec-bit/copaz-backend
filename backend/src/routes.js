@@ -1,10 +1,30 @@
 /* Rutas de la API de Copaz. */
 import express from 'express';
+import webpush from 'web-push';
 import { q, familyState } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 const code = () => Math.random().toString(36).slice(2, 8).toUpperCase(); // invitación 6 chars
+
+/* --- Notificaciones push (web-push + VAPID) --- */
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC || '';
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE || '';
+if (VAPID_PUBLIC && VAPID_PRIVATE) {
+  webpush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:soporte@copaz.app', VAPID_PUBLIC, VAPID_PRIVATE);
+}
+async function nombreDe(familyId, role) {
+  const fam = (await q(`SELECT parents FROM families WHERE id=$1`, [familyId])).rows[0];
+  return (fam && fam.parents && fam.parents[role]) || 'El otro padre/madre';
+}
+async function sendPush(familyId, exceptRole, payload) {
+  if (!VAPID_PUBLIC) return;
+  const subs = (await q(`SELECT endpoint, sub FROM push_subs WHERE family_id=$1 AND role<>$2`, [familyId, exceptRole])).rows;
+  await Promise.all(subs.map(async s => {
+    try { await webpush.sendNotification(s.sub, JSON.stringify(payload)); }
+    catch (e) { if (e.statusCode === 404 || e.statusCode === 410) await q(`DELETE FROM push_subs WHERE endpoint=$1`, [s.endpoint]); }
+  }));
+}
 
 export function buildRouter(broadcast) {
   const r = express.Router();
@@ -71,6 +91,17 @@ export function buildRouter(broadcast) {
     res.json(state);
   });
 
+  /* --------------------------- PUSH -------------------------------- */
+  r.get('/push/vapid', (_req, res) => res.json({ key: VAPID_PUBLIC }));
+  r.post('/push/subscribe', requireAuth, async (req, res) => {
+    const sub = req.body.sub;
+    if (!sub || !sub.endpoint) return res.status(400).json({ error: 'Suscripción no válida' });
+    await q(`INSERT INTO push_subs (id, family_id, user_id, role, endpoint, sub) VALUES ($1,$2,$3,$4,$5,$6)
+      ON CONFLICT (endpoint) DO UPDATE SET family_id=$2, user_id=$3, role=$4, sub=$6`,
+      [uid(), req.user.family_id, req.user.uid, req.user.role, sub.endpoint, JSON.stringify(sub)]);
+    res.json({ ok: true });
+  });
+
   // Ajustes de familia (moneda, esquema de custodia, nombres).
   r.patch('/family', requireAuth, async (req, res) => {
     const { currency, schedule, parents } = req.body || {};
@@ -95,6 +126,9 @@ export function buildRouter(broadcast) {
     await q(`INSERT INTO messages (id, family_id, sender, role, text, ts) VALUES ($1,$2,$3,$4,$5,$6)`,
       [id, req.user.family_id, req.user.uid, req.user.role, text, ts]);
     broadcast(req.user.family_id, { type: 'message', message: { id, from: req.user.role, text, ts } });
+    nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+      title: n, body: text.slice(0, 120), url: './#/mensajes', tag: 'mensajes',
+    })).catch(() => {});
     res.json({ id, from: req.user.role, text, ts });
   });
 
@@ -110,6 +144,15 @@ export function buildRouter(broadcast) {
     const { id: _omit, ...data } = req.body;
     await q(`INSERT INTO ${t} (id, family_id, data) VALUES ($1,$2,$3)`, [id, req.user.family_id, JSON.stringify(data)]);
     broadcast(req.user.family_id, { type: 'sync' });
+    if (t === 'swaps') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Solicitud de intercambio', body: `${n} propone un cambio de día`, url: './#/calendario', tag: 'swap',
+      })).catch(() => {});
+    } else if (t === 'expenses') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Nuevo gasto', body: `${n} registró: ${(data.title || '').slice(0, 60)}`, url: './#/gastos', tag: 'gasto',
+      })).catch(() => {});
+    }
     res.json({ id, ...data });
   });
 

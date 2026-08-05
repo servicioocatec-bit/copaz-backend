@@ -232,8 +232,9 @@ a { color:var(--teal-700); }
     flex-direction:column; justify-content:flex-start; border-top:none; border-right:1px solid var(--line);
     padding:20px 12px;
   }
-  .nav::before { content:'🕊️ Copaz'; display:block; font-size:20px; font-weight:800; color:var(--teal-700);
-    padding:6px 12px 20px; letter-spacing:-.02em; }
+  .nav::before { content:'Copaz'; display:block; font-size:20px; font-weight:800; color:var(--teal-700);
+    padding:4px 12px 20px 44px; letter-spacing:-.02em; line-height:28px;
+    background:url('icons/icon.svg') no-repeat 12px 0; background-size:26px 26px; }
   .nav a { flex:none; flex-direction:row; justify-content:flex-start; gap:12px; font-size:14.5px;
     padding:12px 14px; border-radius:12px; width:100%; }
   .nav a .ic { font-size:19px; }
