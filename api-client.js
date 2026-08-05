@@ -16,6 +16,11 @@ const CONFIG = {
   //
   // ✅ Backend YA desplegado en Railway y conectado:
   API_BASE: 'https://copaz-backend-production.up.railway.app',
+
+  // Links de pago de Flow (pega aquí las URLs de tus planes en flow.cl).
+  // Ej: 'https://www.flow.cl/app/web/pagarBtnPago.php?...'
+  FLOW_ANUAL: 'https://www.flow.cl/btn.php?token=hbf98242a14882cc2887d6a9f4ec38ef44552c0c',
+  FLOW_MENSUAL: 'https://www.flow.cl/btn.php?token=l0d70e5a5192e3412dd193b8356f3b655588f69a',
 };
 
 const Cloud = {
@@ -62,6 +67,10 @@ const Cloud = {
   // --- Notificaciones push ---
   vapid()            { return this.req('GET', '/api/push/vapid'); },
   subscribePush(sub) { return this.req('POST', '/api/push/subscribe', { sub }); },
+
+  // --- Pagos / Premium (Flow) ---
+  payStatus()     { return this.req('GET', '/api/pay/status'); },
+  payCreate(plan) { return this.req('POST', '/api/pay/create', { plan }); },
 
   // --- Tiempo real ---
   connect(onEvent) {

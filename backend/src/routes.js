@@ -3,6 +3,13 @@ import express from 'express';
 import webpush from 'web-push';
 import { q, familyState } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
+import { flowReady, flowPost } from './flow.js';
+
+/* Planes Premium (por cada padre). Días de vigencia que otorga cada pago. */
+const PLANES = {
+  mensual: { amount: 9990,  dias: 30,  label: 'mensual' },
+  anual:   { amount: 89990, dias: 365, label: 'anual' },
+};
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 const code = () => Math.random().toString(36).slice(2, 8).toUpperCase(); // invitación 6 chars
@@ -102,6 +109,77 @@ export function buildRouter(broadcast) {
     res.json({ ok: true });
   });
 
+  /* ------------------------------ PAGOS (Flow) --------------------------- */
+  const baseUrl = (req) => (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  const frontUrl = () => (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+
+  // Estado Premium de la familia
+  r.get('/pay/status', requireAuth, async (req, res) => {
+    const f = (await q(`SELECT premium_until, premium_plan FROM families WHERE id=$1`, [req.user.family_id])).rows[0] || {};
+    const activo = !!(f.premium_until && new Date(f.premium_until) > new Date());
+    res.json({ flowReady: flowReady(), premium: { activo, until: f.premium_until || null, plan: f.premium_plan || null } });
+  });
+
+  // Crea el pago en Flow y devuelve la URL a la que redirigir al usuario.
+  r.post('/pay/create', requireAuth, async (req, res) => {
+    const plan = req.body.plan === 'anual' ? 'anual' : 'mensual';
+    const p = PLANES[plan];
+    if (!flowReady()) return res.status(503).json({ error: 'El cobro con Flow aún no está configurado en el servidor.' });
+    const u = (await q(`SELECT email FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    const order = `COPAZ-${req.user.family_id}-${plan}-${Date.now()}`;
+    try {
+      const result = await flowPost('/payment/create', {
+        commerceOrder: order,
+        subject: `Copaz Premium ${p.label} (por cada padre)`,
+        currency: 'CLP',
+        amount: p.amount,
+        email: u.email,
+        urlConfirmation: `${baseUrl(req)}/api/pay/webhook`,
+        urlReturn: `${baseUrl(req)}/api/pay/return`,
+        optional: JSON.stringify({ family: req.user.family_id, plan }),
+      });
+      await q(`INSERT INTO payments (id, family_id, "order", plan, amount, status) VALUES ($1,$2,$3,$4,$5,'pending')
+        ON CONFLICT ("order") DO NOTHING`, [uid(), req.user.family_id, order, plan, p.amount]);
+      const url = (result.url && result.token) ? `${result.url}?token=${result.token}` : (result.url || null);
+      if (!url) return res.status(502).json({ error: 'Flow no devolvió una URL de pago' });
+      res.json({ url });
+    } catch (e) { res.status(500).json({ error: 'Error creando el pago: ' + e.message }); }
+  });
+
+  // Consulta el estado real en Flow y activa Premium si está pagado.
+  async function activarDesdeToken(token) {
+    if (!token || !flowReady()) return null;
+    const status = await flowPost('/payment/getStatus', { token });
+    const pagado = [2, '2'].includes(status.status);
+    let familyId = null, plan = 'mensual';
+    try { const o = JSON.parse(status.optional || '{}'); familyId = o.family; plan = o.plan || 'mensual'; } catch {}
+    if (!familyId && status.commerceOrder) { const parts = String(status.commerceOrder).split('-'); familyId = parts[1]; plan = parts[2] || 'mensual'; }
+    if (!pagado || !familyId) { return { pagado, familyId }; }
+    const dias = (PLANES[plan] || PLANES.mensual).dias;
+    const cur = (await q(`SELECT premium_until FROM families WHERE id=$1`, [familyId])).rows[0];
+    const desde = (cur && cur.premium_until && new Date(cur.premium_until) > new Date()) ? new Date(cur.premium_until) : new Date();
+    const until = new Date(desde.getTime() + dias * 86400000);
+    await q(`UPDATE families SET premium_until=$1, premium_plan=$2 WHERE id=$3`, [until.toISOString(), plan, familyId]);
+    if (status.commerceOrder) await q(`UPDATE payments SET status='paid' WHERE "order"=$1`, [status.commerceOrder]).catch(() => {});
+    broadcast(familyId, { type: 'sync' });
+    return { pagado: true, familyId, plan, until };
+  }
+
+  // Webhook: Flow lo llama al confirmarse el pago (servidor a servidor).
+  r.post('/pay/webhook', async (req, res) => {
+    res.status(200).send('OK');
+    try { await activarDesdeToken(req.body.token || req.query.token); } catch {}
+  });
+
+  // Retorno: Flow devuelve al usuario aquí; activamos y lo mandamos de vuelta a la app.
+  const handleReturn = async (req, res) => {
+    try { await activarDesdeToken(req.body.token || req.query.token); } catch {}
+    const dest = frontUrl() ? `${frontUrl()}/#/inicio` : '/';
+    res.send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Copaz</title><body style="font-family:system-ui;background:#f7f9fb;color:#0f172a;text-align:center;padding:60px 20px"><h1 style="color:#0d9488">✓ Pago recibido</h1><p>Ya puedes volver a Copaz. Tu Premium se activa en unos segundos.</p><p><a href="${dest}" style="display:inline-block;margin-top:16px;background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Volver a Copaz</a></p><script>setTimeout(function(){location.href=${JSON.stringify(dest)}},2500)</script></body>`);
+  };
+  r.get('/pay/return', handleReturn);
+  r.post('/pay/return', handleReturn);
+
   // Ajustes de familia (moneda, esquema de custodia, nombres).
   r.patch('/family', requireAuth, async (req, res) => {
     const { currency, schedule, parents } = req.body || {};
@@ -133,7 +211,7 @@ export function buildRouter(broadcast) {
   });
 
   /* --------------------- CRUD genérico por entidad ------------------ */
-  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps'];
+  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal'];
   const guard = (t, res) => { if (!ENTITIES.includes(t)) { res.status(404).json({ error: 'Entidad no válida' }); return false; } return true; };
 
   // Crear

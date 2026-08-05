@@ -56,6 +56,7 @@ export async function migrate() {
   await entity('expenses', `data JSONB NOT NULL`);
   await entity('docs',     `data JSONB NOT NULL`);
   await entity('swaps',    `data JSONB NOT NULL`);   // solicitudes de intercambio de días
+  await entity('journal',  `data JSONB NOT NULL`);   // bitácora / diario de los hijos
   await q(`
   CREATE TABLE IF NOT EXISTS messages (
     id         TEXT PRIMARY KEY,
@@ -71,6 +72,20 @@ export async function migrate() {
   await q(`CREATE INDEX IF NOT EXISTS idx_events_fam   ON events(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_expenses_fam ON expenses(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_docs_fam     ON docs(family_id);`);
+  // Estado Premium de la familia (se activa al confirmar el pago en Flow).
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_until TIMESTAMPTZ;`);
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_plan TEXT;`);
+  await q(`
+  CREATE TABLE IF NOT EXISTS payments (
+    id          TEXT PRIMARY KEY,
+    family_id   TEXT NOT NULL,
+    "order"     TEXT UNIQUE NOT NULL,
+    plan        TEXT NOT NULL,
+    amount      INTEGER NOT NULL,
+    status      TEXT DEFAULT 'pending',
+    created_at  TIMESTAMPTZ DEFAULT now()
+  );`);
+
   await q(`
   CREATE TABLE IF NOT EXISTS push_subs (
     id         TEXT PRIMARY KEY,
@@ -101,6 +116,7 @@ export async function familyState(familyId) {
     family: {
       id: fam.id, inviteCode: fam.invite_code, currency: fam.currency,
       schedule: fam.schedule, parents: fam.parents,
+      premium: { until: fam.premium_until || null, plan: fam.premium_plan || null },
     },
     members,
     kids:     await load('kids'),
@@ -108,6 +124,7 @@ export async function familyState(familyId) {
     expenses: await load('expenses'),
     docs:     await load('docs'),
     swaps:    await load('swaps'),
+    journal:  await load('journal'),
     messages,
   };
 }

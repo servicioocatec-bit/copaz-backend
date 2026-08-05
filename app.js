@@ -33,6 +33,8 @@ async function act(fn) { try { await fn(); } catch (e) { toast(e.message || 'Ocu
 /* --------------------------- Config / modo ------------------------------ */
 const API_BASE = (window.COPAZ_CONFIG && window.COPAZ_CONFIG.API_BASE) || '';
 const CLOUD = !!API_BASE;
+const FLOW = { anual: (window.COPAZ_CONFIG && window.COPAZ_CONFIG.FLOW_ANUAL) || '', mensual: (window.COPAZ_CONFIG && window.COPAZ_CONFIG.FLOW_MENSUAL) || '' };
+const PRECIOS = { anual: '$89.990', mensual: '$9.990' };
 
 /* ============================ CAPA DE DATOS ============================= */
 /* Store.state tiene siempre esta forma:
@@ -80,16 +82,16 @@ const Store = {
   /* --- mutaciones (misma firma en ambos modos) --- */
   async create(entity, obj) {
     if (this.mode === 'cloud') { await Cloud.create(entity, obj); await this.refresh(); }
-    else { this.state[entity].push({ id: uid(), ...obj }); this._save(); }
+    else { (this.state[entity] = this.state[entity] || []).push({ id: uid(), ...obj }); this._save(); }
   },
   async update(entity, id, obj) {
     const { id: _i, ...data } = obj;
     if (this.mode === 'cloud') { await Cloud.update(entity, id, data); await this.refresh(); }
-    else { const i = this.state[entity].findIndex(x => x.id === id); if (i >= 0) this.state[entity][i] = { id, ...data }; this._save(); }
+    else { const arr = this.state[entity] = this.state[entity] || []; const i = arr.findIndex(x => x.id === id); if (i >= 0) arr[i] = { id, ...data }; this._save(); }
   },
   async remove(entity, id) {
     if (this.mode === 'cloud') { await Cloud.remove(entity, id); await this.refresh(); }
-    else { this.state[entity] = this.state[entity].filter(x => x.id !== id); this._save(); }
+    else { this.state[entity] = (this.state[entity] || []).filter(x => x.id !== id); this._save(); }
   },
   async sendMessage(text) {
     if (this.mode === 'cloud') { await Cloud.sendMessage(text); await this.refresh(); }
@@ -114,7 +116,7 @@ const Store = {
         schedule: { type: scheduleType, start: iso(new Date(d.getFullYear(), d.getMonth(), 1)), startParent: 'A' },
         parents: { A: a, B: b },
       },
-      kids, events: [], expenses: [], docs: [], swaps: [], messages: [],
+      kids, events: [], expenses: [], docs: [], swaps: [], journal: [], messages: [],
     };
     if (demo) seedDemo(this.state);
     this._save();
@@ -414,8 +416,17 @@ function viewInicio(app) {
   const proxEventos = [...D().events].filter(e => e.date >= hoy).sort((a,b) => (a.date+a.time).localeCompare(b.date+b.time)).slice(0, 3);
   const ultimo = D().messages.filter(m => m.from !== me).slice(-1);
   const miNombre = (D().auth.name || nombre(me)).split(' ')[0];
+  const dp = diasPrueba();
+  const banner = premiumActivo()
+    ? `<div class="card tight" onclick="modalPlanes()" style="cursor:pointer;background:var(--teal-50);border-color:var(--teal-200)"><div style="font-size:13px;color:var(--teal-800)">⭐ <b>Premium activo</b> hasta ${premiumHasta()}</div></div>`
+    : dp === null
+    ? `<div class="card" onclick="modalPlanes()" style="cursor:pointer;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;border:none"><div style="font-weight:800">✨ Prueba Copaz Premium — 30 días gratis</div><div style="font-size:12.5px;opacity:.92;margin-top:2px">Toca para ver los planes.</div></div>`
+    : dp > 0
+      ? `<div class="card tight" onclick="modalPlanes()" style="cursor:pointer;background:var(--teal-50);border-color:var(--teal-200)"><div style="font-size:13px;color:var(--teal-800)">🎁 Te quedan ${dp} día${dp !== 1 ? 's' : ''} de prueba Premium · <b>ver planes</b></div></div>`
+      : `<div class="card tight" onclick="modalPlanes()" style="cursor:pointer;background:#fff7ed;border-color:#fed7aa"><div style="font-size:13px;color:#9a3412">Tu prueba terminó · <b>suscríbete a Premium</b></div></div>`;
 
   app.innerHTML = topbar('Hola, ' + miNombre, fechaLarga(hoy)) + `<div class="screen">
+    ${banner}
     <div class="hero">
       <div class="label">Hoy están con</div>
       <div class="who">${esc(nombre(custodioHoy))}</div>
@@ -783,6 +794,7 @@ function viewHijos(app) {
   app.innerHTML = topbar('Mis hijos', D().kids.length + ' perfil' + (D().kids.length !== 1 ? 'es' : '')) + `<div class="screen">
     ${D().kids.map(kidCard).join('')}
     <button class="btn block ghost" onclick="modalHijo()" style="margin-top:6px">＋ Añadir hijo/a</button>
+    <button class="btn block coral" onclick="modalBitacora()" style="margin-top:10px">📔 Bitácora de los hijos</button>
     <div class="section-title">Documentos <span class="count">${D().docs.length}</span></div>
     <div class="card">${D().docs.length ? D().docs.map(docRow).join('') : `<div class="empty"><div class="ic">📄</div><p>Sin documentos</p></div>`}</div>
     <button class="btn block ghost" onclick="modalDoc()">＋ Registrar documento</button>
@@ -808,7 +820,7 @@ function modalHijoVer(id) {
     <div class="kid-card" style="margin-bottom:6px"><div class="ph" style="background:${k.color||'#0d9488'};width:64px;height:64px;font-size:28px">${inicial(k.name)}</div>
       <div><div style="font-weight:800;font-size:20px">${esc(k.name)}</div>
         <div style="color:var(--slate)">${k.dob ? calcEdad(k.dob)+' años · '+k.dob : 'Sin fecha de nacimiento'}</div></div></div>
-    <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
+    <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Horario escolar</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
     <div class="row2" style="margin-top:18px"><button class="btn ghost" onclick="modalHijo('${k.id}')">Editar</button><button class="btn outline" onclick="delHijo('${k.id}')">Eliminar</button></div>`);
 }
 function modalHijo(id) {
@@ -823,12 +835,14 @@ function modalHijo(id) {
     <div class="field"><label>Medicamentos</label><input id="k-meds" value="${esc(k.meds||'')}"></div>
     <div class="field"><label>Médico / pediatra</label><input id="k-doc" value="${esc(k.doctor||'')}"></div>
     <div class="field"><label>Contacto de emergencia</label><input id="k-em" value="${esc(k.emergency||'')}" placeholder="Nombre y teléfono"></div>
+    <div class="field"><label>Horario escolar</label><textarea id="k-sched" style="min-height:110px" placeholder="Ej.\nLun a Vie: 8:00–14:00\nMartes: natación 16:00\nViernes: salida 12:30">${esc(k.schedule||'')}</textarea></div>
     <div class="field"><label>Notas</label><textarea id="k-notes">${esc(k.notes||'')}</textarea></div>
     <button class="btn block" id="k-save">Guardar</button>`);
   $('#k-save').onclick = () => act(async () => {
     const name = $('#k-name').value.trim(); if (!name) return toast('Escribe el nombre');
     const obj = { name, dob: $('#k-dob').value, bloodType: $('#k-blood').value.trim(), school: $('#k-school').value.trim(), grade: $('#k-grade').value.trim(),
-      allergies: $('#k-all').value.trim(), meds: $('#k-meds').value.trim(), doctor: $('#k-doc').value.trim(), emergency: $('#k-em').value.trim(), notes: $('#k-notes').value.trim() };
+      allergies: $('#k-all').value.trim(), meds: $('#k-meds').value.trim(), doctor: $('#k-doc').value.trim(), emergency: $('#k-em').value.trim(),
+      schedule: $('#k-sched').value.trim(), notes: $('#k-notes').value.trim() };
     if (id) { await Store.update('kids', id, { ...k, ...obj }); }
     else { await Store.create('kids', { ...obj, color: ['#0d9488','#f97316','#2563eb','#e11d48'][D().kids.length % 4] }); }
     closeSheet(); render(); toast('Guardado');
@@ -855,6 +869,36 @@ function modalDoc() {
 }
 const delDoc = (id) => act(async () => { await Store.remove('docs', id); render(); toast('Eliminado'); });
 
+/* =============================== BITÁCORA =========================== */
+function modalBitacora() {
+  const items = [...(D().journal || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0) || b.date.localeCompare(a.date));
+  openSheet('Bitácora 📔', `
+    <p class="hint" style="margin-bottom:12px">Momentos y notas de tus hijos, compartidos entre los dos padres.</p>
+    <button class="btn block" onclick="modalNota()">＋ Nueva nota</button>
+    <div style="margin-top:14px">${items.length ? items.map(notaRow).join('') : `<div class="empty"><div class="ic">📔</div><p>Aún no hay notas</p></div>`}</div>`);
+}
+function notaRow(n) {
+  const kid = D().kids.find(k => k.id === n.kid);
+  return `<div class="list-row"><div class="avatar" style="background:${kid ? kid.color : '#94a3b8'}">${kid ? inicial(kid.name) : '📔'}</div>
+    <div class="body"><div class="t" style="white-space:pre-line">${esc((n.text || '').slice(0, 140))}${(n.text || '').length > 140 ? '…' : ''}</div>
+      <div class="s">${fechaLarga(n.date)}${kid ? ' · ' + esc(kid.name) : ''} · ${esc(nombre(n.author))}</div></div>
+    <button class="btn sm ghost" onclick="delNota('${n.id}')">✕</button></div>`;
+}
+function modalNota() {
+  const kidsOpts = `<option value="">— General —</option>` + D().kids.map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join('');
+  openSheet('Nueva nota', `
+    <div class="field"><label>¿De qué hijo/a?</label><select id="jn-k">${kidsOpts}</select></div>
+    <div class="field"><label>Nota</label><textarea id="jn-t" style="min-height:120px" placeholder="Ej. Hoy Mateo dio sus primeros pasos 🎉  /  Sofía tuvo fiebre, le di paracetamol a las 20:00"></textarea></div>
+    <div class="field"><label>Fecha</label><input id="jn-d" type="date" value="${today()}"></div>
+    <button class="btn block" id="jn-save">Guardar nota</button>`);
+  $('#jn-save').onclick = () => act(async () => {
+    const text = $('#jn-t').value.trim(); if (!text) return toast('Escribe la nota');
+    await Store.create('journal', { text, kid: $('#jn-k').value, date: $('#jn-d').value, author: meRole(), ts: Date.now() });
+    closeSheet(); modalBitacora(); toast('Nota guardada');
+  });
+}
+const delNota = (id) => act(async () => { await Store.remove('journal', id); closeSheet(); modalBitacora(); toast('Nota eliminada'); });
+
 /* =============================== AJUSTES ============================= */
 function modalAjustes() {
   const f = F(), inviteRow = CLOUD ? `
@@ -871,6 +915,7 @@ function modalAjustes() {
       <button data-v="B" class="${meRole()==='B'?'on':''}">${esc(f.parents.B||'B')}</button></div></div>` : ''}
     <div class="field"><label>Moneda</label><select id="st-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}" ${f.currency===c?'selected':''}>${c}</option>`).join('')}</select></div>
     <button class="btn block" id="st-save">Guardar ajustes</button>
+    <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
     ${inviteRow}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
     <p class="hint" style="text-align:center;margin-top:14px">Copaz v1 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
@@ -885,6 +930,56 @@ function modalAjustes() {
   if (rst) rst.onclick = () => { if (confirm('¿Borrar todos los datos? No se puede deshacer.')) { Store.wipeLocal(); closeSheet(); go('inicio'); render(); } };
 }
 function cerrarSesion() { Store.logout(); closeSheet(); location.hash = ''; render(); }
+
+/* =============================== PLANES ============================= */
+function diasPrueba() {
+  const ts = localStorage.getItem('copaz.trialStart');
+  if (!ts) return null;
+  return 30 - diffDias(ts.slice(0, 10), today());
+}
+function modalPlanes() {
+  const dias = diasPrueba();
+  let estado = '';
+  if (dias !== null) {
+    estado = dias > 0
+      ? `<div class="card tight" style="background:var(--teal-50);border-color:var(--teal-200);margin-bottom:14px"><div style="font-size:13px;color:var(--teal-800)">🎁 Prueba activa: te quedan <b>${dias} día${dias !== 1 ? 's' : ''}</b> de Premium gratis.</div></div>`
+      : `<div class="card tight" style="background:#fff7ed;border-color:#fed7aa;margin-bottom:14px"><div style="font-size:13px;color:#9a3412">Tu prueba terminó. Suscríbete para seguir disfrutando Premium.</div></div>`;
+  }
+  openSheet('Copaz Premium ✨', `
+    ${estado}
+    <p class="hint" style="margin-bottom:14px">Precio por cada padre. Aún más barato que OurFamilyWizard y las apps líderes.</p>
+    <div class="card" style="border:2px solid var(--teal-500)">
+      <div style="font-weight:800;font-size:16px">Plan anual <span class="badge green" style="margin-left:6px">2 meses gratis</span></div>
+      <div style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:2px">${PRECIOS.anual} <span style="font-size:13px;font-weight:600;color:var(--slate)">CLP / año</span></div>
+      <div class="hint">Por cada padre · el mejor valor</div>
+      <button class="btn block" style="margin-top:10px" onclick="irAFlow('anual')">Suscribirme al plan anual</button>
+    </div>
+    <div class="card">
+      <div style="font-weight:800;font-size:16px">Plan mensual</div>
+      <div style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:2px">${PRECIOS.mensual} <span style="font-size:13px;font-weight:600;color:var(--slate)">CLP / mes</span></div>
+      <div class="hint">Por cada padre · cancela cuando quieras</div>
+      <button class="btn block ghost" style="margin-top:10px" onclick="irAFlow('mensual')">Suscribirme al plan mensual</button>
+    </div>
+    ${dias === null ? `<button class="btn block outline" onclick="iniciarPrueba()" style="margin-top:4px">Comenzar 30 días gratis</button>` : ''}
+    <p class="hint" style="text-align:center;margin-top:14px">Pagos seguros con Flow · disponible en toda Latinoamérica.</p>
+  `);
+}
+const iniciarPrueba = () => { localStorage.setItem('copaz.trialStart', new Date().toISOString()); closeSheet(); render(); toast('¡30 días de Premium activados! 🎉'); };
+function premiumActivo() { const p = F() && F().premium; return !!(p && p.until && new Date(p.until) > new Date()); }
+function premiumHasta() { const p = F() && F().premium; return (p && p.until) ? fechaLarga(p.until.slice(0, 10)) : ''; }
+async function irAFlow(plan) {
+  if (CLOUD) {
+    try {
+      const r = await Cloud.payCreate(plan);
+      if (r && r.url) { window.location.href = r.url; return; }
+    } catch (e) {
+      if (!FLOW[plan]) { toast(e.message || 'No se pudo iniciar el pago'); return; }
+    }
+  }
+  const url = FLOW[plan];
+  if (!url) { toast('Aún falta configurar el pago'); return; }
+  window.open(url, '_blank', 'noopener');
+}
 
 /* =========================== MODAL / SHEET ========================== */
 function openSheet(title, body) {
@@ -929,4 +1024,5 @@ Object.assign(window, {
   go, renderAuth, calMove, modalDia, modalEvento, delEvento, modalEsquema, modalGasto, saldar, saldarTodo,
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
   modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,
+  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota,
 });

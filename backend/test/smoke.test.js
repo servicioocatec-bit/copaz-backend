@@ -104,6 +104,20 @@ try {
   r = await api('GET', '/api/state', null, tokenA);
   ok(r.body.swaps[0].status === 'accepted', 'Intercambio aceptado sincronizado a A');
 
+  // 13. Bitácora (journal)
+  r = await api('POST', '/api/journal', { text: 'Primer día de escuela', author: 'A', date: '2026-08-04', ts: Date.now() }, tokenA);
+  ok(r.status === 200 && r.body.id, 'A crea nota en la bitácora');
+  r = await api('GET', '/api/state', null, tokenB);
+  ok(r.body.journal.length === 1 && r.body.journal[0].text.includes('escuela'), 'B ve la nota (sincronizada)');
+
+  // 14. Estado Premium / Flow
+  r = await api('GET', '/api/pay/status', null, tokenA);
+  ok(r.status === 200 && r.body.premium && r.body.premium.activo === false, 'Estado Premium: inactivo por defecto');
+  r = await api('POST', '/api/pay/create', { plan: 'anual' }, tokenA);
+  ok(r.status === 503, 'Sin llaves Flow, /pay/create responde 503 (modo gratis)');
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(r.body.family.premium && r.body.family.premium.until === null, 'Estado incluye premium en la familia');
+
   console.log(`\n✅ ${pass} pruebas pasaron. Backend funciona de extremo a extremo.`);
 } catch (e) {
   console.error('\n❌ Falló una prueba:', e.message);
