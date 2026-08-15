@@ -1,0 +1,34 @@
+/* Correo transaccional con Resend (https://resend.com), sin dependencias:
+   se llama con fetch. Si no hay RESEND_API_KEY, los correos se omiten y la app
+   sigue funcionando igual. Mismo enfoque que uso en mis otras apps. */
+const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim();
+const EMAIL_FROM = (process.env.EMAIL_FROM || 'Copaz <onboarding@resend.dev>').trim();
+
+export const mailReady = () => !!RESEND_API_KEY;
+
+export async function enviarCorreo(to, subject, html) {
+  if (!RESEND_API_KEY) return false;
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: EMAIL_FROM, to, subject, html }),
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+const wrap = (titulo, cuerpo) => `<div style="font-family:Segoe UI,system-ui,Arial,sans-serif;max-width:520px;margin:auto;color:#0f172a">
+  <div style="background:#0d9488;color:#fff;padding:20px;border-radius:16px 16px 0 0"><h1 style="margin:0;font-size:20px">🕊️ Copaz</h1></div>
+  <div style="border:1px solid #e2e8f0;border-top:none;border-radius:0 0 16px 16px;padding:22px">
+    <h2 style="color:#0f766e;margin-top:0">${titulo}</h2>${cuerpo}
+    <p style="color:#94a3b8;font-size:12px;margin-top:24px">Copaz — Coparentalidad en paz.</p></div></div>`;
+
+export const correoBienvenida = (nombre) => wrap(`¡Bienvenido/a, ${nombre}!`,
+  `<p>Tu cuenta de Copaz está lista. Ya puedes coordinar todo lo de tus hijos con el otro padre en un solo lugar: calendario de custodia, gastos, mensajes y más.</p>
+   <p>Tienes <b>30 días de prueba gratis</b> de Premium. ¡Que lo disfrutes!</p>`);
+
+export const correoReset = (link) => wrap('Restablece tu contraseña',
+  `<p>Recibimos una solicitud para cambiar tu contraseña. Haz clic en el botón (válido por 1 hora):</p>
+   <p style="text-align:center;margin:22px 0"><a href="${link}" style="background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Cambiar mi contraseña</a></p>
+   <p style="color:#64748b;font-size:13px">Si no fuiste tú, ignora este correo; tu contraseña seguirá igual.</p>`);

@@ -208,11 +208,16 @@ async function boot() { await Store.init(); render(); if (localStorage.getItem('
 /* ================================ RENDER =============================== */
 function render() {
   const nav = $('#nav');
+  // Enlace de restablecer contraseña (llega por correo con ?token=)
+  if (CLOUD && location.hash.indexOf('/reset') >= 0 && location.hash.indexOf('token=') >= 0) {
+    nav.classList.add('hidden'); return renderAuth('reset');
+  }
   // Puertas de acceso
   if (Store.mode === 'cloud') {
     if (!Cloud.token) { nav.classList.add('hidden'); return renderAuth('welcome'); }
     if (!Store.state) { nav.classList.add('hidden'); return renderLoading(); }
     if (D().kids.length === 0 && !localStorage.getItem('copaz.setupDone')) { nav.classList.add('hidden'); return renderSetup(); }
+    if (F().access && F().access.bloqueado) { nav.classList.add('hidden'); return renderPaywall(); }
   } else {
     if (!Store.state || !Store.state.family) { nav.classList.add('hidden'); return renderOnboarding(); }
   }
@@ -223,6 +228,17 @@ function render() {
   ({ inicio: viewInicio, calendario: viewCalendario, gastos: viewGastos, mensajes: viewMensajes, hijos: viewHijos }[r])(app);
 }
 function renderLoading() { $('#app').innerHTML = `<div class="ob"><div class="empty"><div class="ic">🕊️</div><p>Cargando tu espacio…</p></div></div>`; }
+function renderPaywall() {
+  $('#app').innerHTML = `<div class="ob" style="justify-content:center">
+    ${LOGO}<h1 style="font-size:24px">Tu acceso terminó</h1>
+    <p class="tag">Tu prueba gratis de Copaz llegó a su fin. Suscríbete para seguir coordinando todo lo de tus hijos, sin perder nada.</p>
+    <div style="margin-top:22px">
+      <button class="btn block" onclick="modalPlanes()">Ver planes y suscribirme</button>
+      <button class="btn ghost block" style="margin-top:10px" onclick="cerrarSesion()">Cerrar sesión</button>
+    </div>
+    <p class="hint" style="margin-top:18px">¿Ya pagaste? Tu Premium se activa apenas confirmamos el pago.</p>
+  </div>`;
+}
 function renderNav() {
   const r = currentRoute();
   const lastSeen = +(localStorage.getItem('copaz.msgSeen') || 0);
@@ -300,7 +316,8 @@ function renderAuth(screen) {
         <button class="btn block" onclick="renderAuth('register')">Crear cuenta</button>
         <button class="btn outline block" style="margin-top:10px" onclick="renderAuth('login')">Ya tengo cuenta</button>
         <button class="btn ghost block" style="margin-top:10px" onclick="renderAuth('join')">Tengo un código de invitación</button>
-      </div></div>`;
+      </div>
+      <p class="hint" style="margin-top:22px"><a href="terminos.html">Términos</a> · <a href="privacidad.html">Privacidad</a></p></div>`;
   } else if (screen === 'register') {
     app.innerHTML = authShell('Crear cuenta', `
       <div class="field"><label>Tu nombre</label><input id="au-name" placeholder="Ej. Pedro"></div>
@@ -321,13 +338,36 @@ function renderAuth(screen) {
       <div class="field"><label>Correo</label><input id="au-email" type="email" placeholder="tu@correo.com"></div>
       <div class="field"><label>Contraseña</label><input id="au-pass" type="password"></div>
       <button class="btn block" id="au-go">Entrar</button>
-      <p class="hint" style="text-align:center;margin-top:14px">¿Nuevo aquí? <a onclick="renderAuth('register')">Crea una cuenta</a></p>`);
+      <p class="hint" style="text-align:center;margin-top:14px">¿Nuevo aquí? <a onclick="renderAuth('register')">Crea una cuenta</a></p>
+      <p class="hint" style="text-align:center;margin-top:6px"><a onclick="renderAuth('forgot')">¿Olvidaste tu contraseña?</a></p>`);
     $('#au-go').onclick = () => act(async () => {
       const email = $('#au-email').value.trim(), pass = $('#au-pass').value;
       if (!email || !pass) return toast('Escribe correo y contraseña');
       const r = await Cloud.login(email, pass);
       Cloud.setToken(r.token); Store.setUser(r.user);
       await Store.refresh(); Store._connect(); go('inicio'); render();
+    });
+  } else if (screen === 'forgot') {
+    app.innerHTML = authShell('Recuperar contraseña', `
+      <p class="hint" style="margin-bottom:14px">Escribe tu correo y te enviaremos un enlace para crear una nueva contraseña.</p>
+      <div class="field"><label>Correo</label><input id="au-email" type="email" placeholder="tu@correo.com"></div>
+      <button class="btn block" id="au-go">Enviar enlace</button>
+      <p class="hint" style="text-align:center;margin-top:14px"><a onclick="renderAuth('login')">Volver</a></p>`);
+    $('#au-go').onclick = () => act(async () => {
+      const email = $('#au-email').value.trim(); if (!email) return toast('Escribe tu correo');
+      await Cloud.forgot(email);
+      toast('Si el correo existe, te enviamos un enlace 📧'); renderAuth('login');
+    });
+  } else if (screen === 'reset') {
+    const token = (location.hash.match(/token=([^&]+)/) || [])[1] || '';
+    app.innerHTML = authShell('Nueva contraseña', `
+      <div class="field"><label>Nueva contraseña</label><input id="au-pass" type="password" placeholder="Mínimo 6 caracteres"></div>
+      <button class="btn block" id="au-go">Guardar contraseña</button>
+      <p class="hint" style="text-align:center;margin-top:14px"><a onclick="location.hash='';renderAuth('login')">Volver</a></p>`);
+    $('#au-go').onclick = () => act(async () => {
+      const pass = $('#au-pass').value; if (pass.length < 6) return toast('Mínimo 6 caracteres');
+      await Cloud.reset(token, pass);
+      toast('¡Contraseña actualizada! Ya puedes entrar.'); location.hash = ''; renderAuth('login');
     });
   } else if (screen === 'join') {
     app.innerHTML = authShell('Unirme con un código', `
@@ -933,6 +973,11 @@ function cerrarSesion() { Store.logout(); closeSheet(); location.hash = ''; rend
 
 /* =============================== PLANES ============================= */
 function diasPrueba() {
+  if (CLOUD) {
+    const t = F() && F().access && F().access.trialUntil;
+    if (!t) return null;
+    return Math.ceil((new Date(t).getTime() - Date.now()) / 86400000);
+  }
   const ts = localStorage.getItem('copaz.trialStart');
   if (!ts) return null;
   return 30 - diffDias(ts.slice(0, 10), today());
@@ -960,24 +1005,33 @@ function modalPlanes() {
       <div class="hint">Por cada padre · cancela cuando quieras</div>
       <button class="btn block ghost" style="margin-top:10px" onclick="irAFlow('mensual')">Suscribirme al plan mensual</button>
     </div>
-    ${dias === null ? `<button class="btn block outline" onclick="iniciarPrueba()" style="margin-top:4px">Comenzar 30 días gratis</button>` : ''}
+    ${(!CLOUD && dias === null) ? `<button class="btn block outline" onclick="iniciarPrueba()" style="margin-top:4px">Comenzar 30 días gratis</button>` : ''}
     <p class="hint" style="text-align:center;margin-top:14px">Pagos seguros con Flow · disponible en toda Latinoamérica.</p>
   `);
 }
 const iniciarPrueba = () => { localStorage.setItem('copaz.trialStart', new Date().toISOString()); closeSheet(); render(); toast('¡30 días de Premium activados! 🎉'); };
-function premiumActivo() { const p = F() && F().premium; return !!(p && p.until && new Date(p.until) > new Date()); }
-function premiumHasta() { const p = F() && F().premium; return (p && p.until) ? fechaLarga(p.until.slice(0, 10)) : ''; }
+function premiumActivo() {
+  if (CLOUD) return !!(F() && F().access && F().access.premium);
+  const p = F() && F().premium; return !!(p && p.until && new Date(p.until) > new Date());
+}
+function premiumHasta() {
+  const u = CLOUD ? (F() && F().access && F().access.premiumUntil) : (F() && F().premium && F().premium.until);
+  return u ? fechaLarga(String(u).slice(0, 10)) : '';
+}
 async function irAFlow(plan) {
+  // Pago único generado automáticamente por Flow (API). Al pagar, Premium se activa solo.
+  // No hay cobro recurrente: cuando vence, se paga de nuevo a mano.
   if (CLOUD) {
     try {
       const r = await Cloud.payCreate(plan);
       if (r && r.url) { window.location.href = r.url; return; }
     } catch (e) {
-      if (!FLOW[plan]) { toast(e.message || 'No se pudo iniciar el pago'); return; }
+      if (FLOW[plan]) { window.open(FLOW[plan], '_blank', 'noopener'); return; } // respaldo: botón de pago
+      toast(e.message || 'No se pudo iniciar el pago'); return;
     }
   }
   const url = FLOW[plan];
-  if (!url) { toast('Aún falta configurar el pago'); return; }
+  if (!url) { toast('Pago no configurado'); return; }
   window.open(url, '_blank', 'noopener');
 }
 

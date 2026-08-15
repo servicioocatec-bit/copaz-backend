@@ -51,6 +51,8 @@ const Cloud = {
   register(email, password, name) { return this.req('POST', '/api/auth/register', { email, password, name }); },
   login(email, password)          { return this.req('POST', '/api/auth/login', { email, password }); },
   join(inviteCode)                { return this.req('POST', '/api/family/join', { inviteCode }); },
+  forgot(email)                   { return this.req('POST', '/api/auth/forgot', { email }); },
+  reset(token, password)          { return this.req('POST', '/api/auth/reset', { token, password }); },
 
   // --- Estado ---
   state()             { return this.req('GET', '/api/state'); },

@@ -6,6 +6,7 @@ import { setPool, migrate } from '../src/db.js';
 import { createApp } from '../src/server.js';
 
 process.env.JWT_SECRET = 'test-secret';
+process.env.ADMIN_KEY = 'testadmin';
 
 // --- Preparar pg-mem como si fuera Postgres ---
 const mem = newDb();
@@ -19,10 +20,10 @@ const app = createApp();
 const server = app.listen(0);
 const base = `http://localhost:${server.address().port}`;
 
-const api = async (method, path, body, token) => {
+const api = async (method, path, body, token, extra) => {
   const res = await fetch(base + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(extra || {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json().catch(() => ({})) };
@@ -110,13 +111,31 @@ try {
   r = await api('GET', '/api/state', null, tokenB);
   ok(r.body.journal.length === 1 && r.body.journal[0].text.includes('escuela'), 'B ve la nota (sincronizada)');
 
-  // 14. Estado Premium / Flow
-  r = await api('GET', '/api/pay/status', null, tokenA);
-  ok(r.status === 200 && r.body.premium && r.body.premium.activo === false, 'Estado Premium: inactivo por defecto');
-  r = await api('POST', '/api/pay/create', { plan: 'anual' }, tokenA);
-  ok(r.status === 503, 'Sin llaves Flow, /pay/create responde 503 (modo gratis)');
+  // 14. Acceso: prueba automática, bloqueo y activación admin
   r = await api('GET', '/api/state', null, tokenA);
-  ok(r.body.family.premium && r.body.family.premium.until === null, 'Estado incluye premium en la familia');
+  ok(r.body.family.access && r.body.family.access.enTrial === true && r.body.family.access.bloqueado === false, 'Nueva familia entra en prueba (no bloqueada)');
+  r = await api('GET', '/api/pay/status', null, tokenA);
+  ok(r.status === 200 && r.body.access && r.body.access.activo === true, 'pay/status: acceso activo por prueba');
+  r = await api('POST', '/api/pay/create', { plan: 'anual' }, tokenA);
+  ok(r.status === 503, 'Sin llaves Flow, /pay/create responde 503');
+  r = await api('POST', '/api/admin/activate', { email: 'pedro@test.com', plan: 'anual' }, null, { 'x-admin-key': 'testadmin' });
+  ok(r.status === 200 && r.body.ok, 'Admin activa Premium por email');
+  r = await api('POST', '/api/admin/activate', { email: 'pedro@test.com', plan: 'anual' }, null, { 'x-admin-key': 'malo' });
+  ok(r.status === 401, 'Admin rechaza clave incorrecta');
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(r.body.family.access.premium === true, 'Familia queda Premium tras activación admin');
+
+  // 15. Recuperación de contraseña
+  r = await api('POST', '/api/auth/forgot', { email: 'pedro@test.com' });
+  ok(r.status === 200 && r.body.ok, 'forgot responde ok (sin filtrar existencia)');
+  const tokRow = (await pool.query(`SELECT reset_token FROM users WHERE email='pedro@test.com'`)).rows[0];
+  ok(tokRow && tokRow.reset_token, 'forgot genera token de reseteo en la base');
+  r = await api('POST', '/api/auth/reset', { token: tokRow.reset_token, password: 'nuevapass123' });
+  ok(r.status === 200 && r.body.ok, 'reset cambia la contraseña');
+  r = await api('POST', '/api/auth/login', { email: 'pedro@test.com', password: 'nuevapass123' });
+  ok(r.status === 200 && r.body.token, 'login con la nueva contraseña funciona');
+  r = await api('GET', '/api/admin/families', null, null, { 'x-admin-key': 'testadmin' });
+  ok(r.status === 200 && Array.isArray(r.body.families) && r.body.families.length >= 1, 'admin lista familias');
 
   console.log(`\n✅ ${pass} pruebas pasaron. Backend funciona de extremo a extremo.`);
 } catch (e) {

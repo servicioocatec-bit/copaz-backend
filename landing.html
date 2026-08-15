@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Copaz — Coparentalidad en paz</title>
+<meta name="description" content="La app para padres separados: calendario de custodia, gastos, mensajes y todo lo de tus hijos en un solo lugar. Un precio por cada padre, 30 días gratis.">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,Arial,sans-serif;color:#0f172a;line-height:1.6;background:#fff}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1000px;margin:0 auto;padding:0 20px}
+  .btn{display:inline-block;background:#0d9488;color:#fff;font-weight:800;padding:14px 26px;border-radius:14px;box-shadow:0 8px 20px rgba(13,148,136,.28)}
+  .btn.big{font-size:18px;padding:16px 32px}
+  .btn.ghost{background:#f0fdfa;color:#0f766e;box-shadow:none}
+  nav{display:flex;align-items:center;justify-content:space-between;padding:18px 0}
+  nav .brand{font-weight:800;font-size:22px;color:#0f766e}
+  .hero{background:linear-gradient(135deg,#0d9488,#0f766e 60%,#115e59);color:#fff;padding:56px 0 64px;text-align:center}
+  .hero h1{font-size:40px;line-height:1.15;letter-spacing:-.02em;margin-bottom:14px}
+  .hero p{font-size:18px;opacity:.95;max-width:640px;margin:0 auto 26px}
+  .hero .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .hero .btn{background:#fff;color:#0f766e}
+  .hero .btn.ghost{background:rgba(255,255,255,.15);color:#fff}
+  section{padding:52px 0}
+  h2{font-size:28px;text-align:center;letter-spacing:-.02em;margin-bottom:8px}
+  .sub{text-align:center;color:#64748b;margin-bottom:32px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+  .card{border:1px solid #e2e8f0;border-radius:18px;padding:22px;background:#fff;box-shadow:0 2px 12px rgba(15,23,42,.05)}
+  .card .ic{font-size:28px}.card h3{font-size:17px;margin:8px 0 4px}.card p{color:#475569;font-size:14.5px}
+  .pricing{background:#f7f9fb}
+  .plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;max-width:720px;margin:0 auto}
+  .plan{border:1px solid #e2e8f0;border-radius:20px;padding:26px;background:#fff;text-align:center}
+  .plan.top{border:2px solid #0d9488;box-shadow:0 12px 30px rgba(13,148,136,.15)}
+  .plan .price{font-size:34px;font-weight:800;color:#0f766e;letter-spacing:-.02em;margin:6px 0}
+  .plan .per{color:#64748b;font-size:14px}
+  .tag{display:inline-block;background:#dcfce7;color:#15803d;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;margin-bottom:6px}
+  .cmp{max-width:640px;margin:26px auto 0;color:#475569;font-size:14.5px;text-align:center}
+  footer{background:#0f172a;color:#cbd5e1;padding:32px 0;font-size:14px}
+  footer a{color:#99f6e4}
+  .center{text-align:center}
+</style></head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <div class="brand">🕊️ Copaz</div>
+    <div><a class="btn ghost" href="index.html">Entrar</a></div>
+  </nav>
+</div>
+
+<div class="hero">
+  <div class="wrap">
+    <h1>Coparentalidad en paz</h1>
+    <p>Todo lo de tus hijos, coordinado con el otro padre en un solo lugar: custodia, gastos, mensajes y más. Sin discusiones, sin caos.</p>
+    <div class="row">
+      <a class="btn big" href="index.html">Crear cuenta — 30 días gratis</a>
+      <a class="btn ghost big" href="#planes">Ver planes</a>
+    </div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>Todo en una sola app</h2>
+    <p class="sub">Pensada para padres que no viven juntos.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">📅</div><h3>Calendario de custodia</h3><p>Plantillas automáticas (semanal, 2-2-3, 2-2-5-5…) y solicitudes de intercambio de días.</p></div>
+      <div class="card"><div class="ic">💰</div><h3>Gastos compartidos</h3><p>Divide costos, exporta a Excel y ve al instante quién le debe a quién.</p></div>
+      <div class="card"><div class="ic">💬</div><h3>Mensajes con calma</h3><p>Un hilo ordenado por fecha, con verificador de tono que ayuda a reducir el conflicto.</p></div>
+      <div class="card"><div class="ic">🧒</div><h3>Perfiles de tus hijos</h3><p>Datos médicos, alergias, escuela, horario y contactos de emergencia.</p></div>
+      <div class="card"><div class="ic">📔</div><h3>Bitácora</h3><p>Guarda momentos y notas importantes, compartidos entre los dos padres.</p></div>
+      <div class="card"><div class="ic">🔄</div><h3>Sincronización en vivo</h3><p>Lo que uno cambia, el otro lo ve al instante. Con notificaciones.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="pricing" id="planes">
+  <div class="wrap">
+    <h2>Un precio justo, por cada padre</h2>
+    <p class="sub">Empieza con 30 días gratis. Cancela cuando quieras.</p>
+    <div class="plans">
+      <div class="plan top">
+        <span class="tag">2 meses gratis</span>
+        <h3>Plan anual</h3>
+        <div class="price">$89.990</div>
+        <div class="per">CLP / año · por cada padre</div>
+        <div style="margin-top:16px"><a class="btn" href="index.html">Empezar gratis</a></div>
+      </div>
+      <div class="plan">
+        <h3>Plan mensual</h3>
+        <div class="price">$9.990</div>
+        <div class="per">CLP / mes · por cada padre</div>
+        <div style="margin-top:16px"><a class="btn ghost" href="index.html">Empezar gratis</a></div>
+      </div>
+    </div>
+    <p class="cmp">Mucho más accesible que las apps líderes del mundo (que cobran entre US$110 y US$300 al año por cada padre). Copaz está en español y pensado para Latinoamérica.</p>
+  </div>
+</section>
+
+<section class="center">
+  <div class="wrap">
+    <h2>Empieza hoy</h2>
+    <p class="sub">Crea tu cuenta e invita al otro padre con un código.</p>
+    <a class="btn big" href="index.html">Crear mi cuenta gratis</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap center">
+    <div style="font-weight:800;color:#fff;margin-bottom:8px">🕊️ Copaz</div>
+    <div><a href="terminos.html">Términos</a> · <a href="privacidad.html">Privacidad</a> · <a href="mailto:soporte@copaz.app">soporte@copaz.app</a></div>
+    <div style="margin-top:8px;color:#64748b">© 2026 Copaz — Coparentalidad en paz.</div>
+  </div>
+</footer>
+
+</body></html>

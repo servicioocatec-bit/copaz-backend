@@ -1,67 +1,90 @@
-# 🕊️ Copaz — Guía del proyecto
+# 🕊️ Copaz — Guía completa
 
-**Copaz** es una app (PWA) para padres separados que reúne en un solo lugar todo lo de sus hijos: calendario de custodia, gastos compartidos, mensajes y perfiles. Este paquete trae **la app completa + el backend**, listo para probar hoy y para desplegar cuando quieras.
+App para padres separados (PWA) con backend, pagos con Flow, prueba/bloqueo y panel de administrador.
+Este zip trae **todo**: la app, el backend, la landing, los legales y el panel admin.
 
 ---
 
-## 📁 Qué hay en este paquete
+## 📁 Contenido
 
 ```
 copaz/
 ├── index.html            La app (PWA)
-├── app.css               Estilos
-├── app.js                Toda la app
-├── api-client.js         Conexión con el backend  ← aquí pones tu URL de Railway
-├── manifest.webmanifest  Para instalarla como app
-├── sw.js                 Funciona offline
+├── app.js / app.css      Toda la app y estilos
+├── api-client.js         Conexión con el backend  ← aquí va tu URL de Railway
+├── manifest.webmanifest  Instalable
+├── sw.js                 Offline + notificaciones push
 ├── icons/                Iconos
-├── GUIA.md               Este archivo
-└── backend/              El servidor (Node + PostgreSQL) para Railway
-    ├── src/              Código del servidor
-    ├── test/             Pruebas automáticas
-    └── README.md         Guía de despliegue en Railway
+├── landing.html          Página de venta (pública)
+├── terminos.html         Términos y Condiciones
+├── privacidad.html       Política de Privacidad
+├── admin.html            Panel de administración (activar cuentas)
+└── backend/              Servidor Node + PostgreSQL (Railway)
+    ├── src/              server, routes, db, auth, flow, mail
+    ├── test/             pruebas automáticas (35 en verde)
+    └── README.md         Guía de despliegue del backend
 ```
 
 ---
 
-## ▶️ Opción 1: Probarla YA (modo local, sin backend)
+## ✅ Qué incluye (todo probado)
 
-1. Abre `index.html` en Chrome, Edge o Safari (doble clic).
-2. Pulsa **"Ver con datos de ejemplo"** para verla llena.
-3. En el móvil o desde Chrome puedes **instalarla**: menú → *Añadir a pantalla de inicio*. Funciona como app nativa, incluso sin internet.
-
-> En modo local, los datos se guardan en ese dispositivo. Perfecto para probar el producto. Para que **los dos padres compartan datos**, sigue la Opción 2.
-
----
-
-## ☁️ Opción 2: Activar la nube (los dos padres sincronizados)
-
-1. **Despliega el backend en Railway.** Sigue `backend/README.md` (subir a GitHub, añadir PostgreSQL, variables, generar dominio). Como ya usas Railway, son pocos minutos.
-2. **Conecta la app.** Abre `api-client.js` y cambia:
-   ```js
-   API_BASE: '',
-   ```
-   por tu URL de Railway, por ejemplo:
-   ```js
-   API_BASE: 'https://copaz-backend-production.up.railway.app',
-   ```
-3. **Sube la app** a cualquier hosting estático (Railway, Netlify, Vercel, GitHub Pages…). Con eso, la app pasa a **modo nube**: pantalla de login, registro y sincronización en tiempo real.
-
-### Cómo se emparejan los dos padres
-1. El **padre A** crea su cuenta → recibe un **código de invitación** de 6 caracteres.
-2. Se lo pasa al **padre B**.
-3. El **padre B** entra en *"Tengo un código de invitación"*, crea su cuenta con ese código → quedan vinculados y comparten todo al instante.
+- Registro/login, emparejamiento de los dos padres, **sincronización en tiempo real**.
+- Calendario de custodia (5 plantillas) + **intercambios de días**.
+- Gastos compartidos con balance, resumen mensual, **CSV** y edición.
+- Mensajes con **verificador de tono**, **bitácora**, perfiles de hijos con **horario escolar**.
+- **Notificaciones push** (VAPID).
+- **Recuperar contraseña** + **correos** (Resend).
+- **Pagos con Flow** (pago único mensual/anual; al pagar, Premium se activa solo; sin cobro recurrente).
+- **Prueba de 30 días** controlada por el servidor + **bloqueo (paywall)** al vencer.
+- **Panel de administrador** (`admin.html`) para activar cuentas a mano.
+- Landing de venta + Términos + Privacidad.
 
 ---
 
-## ✅ Estado actual (probado)
+## 🚀 Desplegar (resumen)
 
-- App completa: inicio, calendario de custodia (5 plantillas), gastos con balance, mensajes con verificador de tono, perfiles de hijos y documentos.
-- Backend con login, emparejamiento, sincronización en tiempo real (WebSocket) y seguridad por familia. **18 pruebas automáticas pasando.**
-- Funciona en dos modos sin tocar el código de la app: **local** (vacío `API_BASE`) o **nube** (con tu URL).
+### 1. Frontend + Backend
+Sube **toda la carpeta `copaz`** a tu repo de GitHub conectado a Railway.
+Railway redespliega solo el backend (`copaz-backend`) y el frontend (sitio estático).
 
-## 🔜 Siguientes etapas sugeridas
-- Notificaciones push.
-- Subida real de archivos de documentos.
-- Recuperación de contraseña por correo.
-- Empaquetado para Play Store / App Store.
+### 2. Variables en Railway → servicio `copaz-backend` → Variables
+Ya deberías tener: `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`, `VAPID_*`, `PUBLIC_URL`, `FRONTEND_URL`, `FLOW_BASE_URL`.
+Agrega/confirma (las secretas las pegas tú):
+
+```
+FLOW_API_KEY=<las MISMAS de producción que usa Acopia>
+FLOW_SECRET_KEY=<las MISMAS de producción que usa Acopia>
+ADMIN_KEY=<cadena larga y secreta, para el panel admin>
+RESEND_API_KEY=<tu llave de Resend, para correos>   (opcional)
+EMAIL_FROM=Copaz <onboarding@resend.dev>
+TRIAL_DAYS=30
+```
+
+### 3. Conectar la app al backend
+En `api-client.js`, `API_BASE` ya apunta a tu backend de Railway. Los links de Flow (`FLOW_ANUAL`, `FLOW_MENSUAL`) son el respaldo por si el API falla.
+
+---
+
+## 🔗 Tus URLs
+
+- App: `https://accomplished-prosperity-production-5a5c.up.railway.app`
+- Landing (venta): `.../landing.html`
+- **Panel admin**: `.../admin.html`  (entras con tu `ADMIN_KEY`)
+- Backend: `https://copaz-backend-production.up.railway.app`
+
+---
+
+## 💳 Cómo funcionan los pagos
+
+- La persona toca **Suscribirme** → Flow genera el pago → al pagar, **Premium se activa solo** (webhook). Un pago por período, **sin renovación automática**.
+- Nota: Flow valida que el correo sea **real**. Por eso conviene **verificación de correo** al registrarse (recomendado antes de vender).
+- Si algún día quieres activar a mano, usas **`admin.html`**: buscas por correo y activas mensual/anual con un clic.
+
+---
+
+## 🔜 Recomendado antes de vender
+
+- Dominio propio (ej. `copaz.app`).
+- Verificación de correo al registrarse.
+- Respaldos automáticos de la base (Railway).

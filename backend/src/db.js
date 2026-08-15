@@ -72,9 +72,18 @@ export async function migrate() {
   await q(`CREATE INDEX IF NOT EXISTS idx_events_fam   ON events(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_expenses_fam ON expenses(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_docs_fam     ON docs(family_id);`);
-  // Estado Premium de la familia (se activa al confirmar el pago en Flow).
+  // Recuperación de contraseña.
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires TIMESTAMPTZ;`);
+
+  // Estado de acceso de la familia: prueba gratis + Premium (se activan/vencen en el servidor).
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS trial_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_plan TEXT;`);
+  // Familias creadas antes de existir la prueba: se les otorga 30 días desde ahora
+  // para que no queden bloqueadas al desplegar esta versión.
+  await q(`UPDATE families SET trial_until=$1 WHERE trial_until IS NULL`,
+    [new Date(Date.now() + 30 * 86400000).toISOString()]);
   await q(`
   CREATE TABLE IF NOT EXISTS payments (
     id          TEXT PRIMARY KEY,
@@ -112,11 +121,18 @@ export async function familyState(familyId) {
   const messages = (await q(
     `SELECT id, role AS "from", text, ts FROM messages WHERE family_id=$1 ORDER BY ts ASC`, [familyId]
   )).rows;
+  const ahora = Date.now();
+  const premOk = !!(fam.premium_until && new Date(fam.premium_until).getTime() > ahora);
+  const trialOk = !!(fam.trial_until && new Date(fam.trial_until).getTime() > ahora);
   return {
     family: {
       id: fam.id, inviteCode: fam.invite_code, currency: fam.currency,
       schedule: fam.schedule, parents: fam.parents,
       premium: { until: fam.premium_until || null, plan: fam.premium_plan || null },
+      access: {
+        premium: premOk, enTrial: trialOk, activo: premOk || trialOk, bloqueado: !(premOk || trialOk),
+        trialUntil: fam.trial_until || null, premiumUntil: fam.premium_until || null, plan: fam.premium_plan || null,
+      },
     },
     members,
     kids:     await load('kids'),

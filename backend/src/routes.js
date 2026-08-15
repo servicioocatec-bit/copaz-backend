@@ -1,9 +1,11 @@
 /* Rutas de la API de Copaz. */
 import express from 'express';
+import crypto from 'crypto';
 import webpush from 'web-push';
 import { q, familyState } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 import { flowReady, flowPost } from './flow.js';
+import { enviarCorreo, correoBienvenida, correoReset } from './mail.js';
 
 /* Planes Premium (por cada padre). Días de vigencia que otorga cada pago. */
 const PLANES = {
@@ -51,15 +53,40 @@ export function buildRouter(broadcast) {
     // asegurar unicidad del código
     while ((await q(`SELECT 1 FROM families WHERE invite_code=$1`, [invite])).rowCount) invite = code();
 
-    await q(`INSERT INTO families (id, invite_code, parents) VALUES ($1,$2,$3)`,
-      [familyId, invite, JSON.stringify({ A: name, B: '' })]);
+    const trialDias = Math.max(0, Number(process.env.TRIAL_DAYS || 30));
+    const trialUntil = new Date(Date.now() + trialDias * 86400000).toISOString();
+    await q(`INSERT INTO families (id, invite_code, parents, trial_until) VALUES ($1,$2,$3,$4)`,
+      [familyId, invite, JSON.stringify({ A: name, B: '' }), trialUntil]);
 
     const userId = uid();
     await q(`INSERT INTO users (id, email, password, name, family_id, role) VALUES ($1,$2,$3,$4,$5,'A')`,
       [userId, email.toLowerCase(), await hash(password), name, familyId]);
 
     const user = { id: userId, email: email.toLowerCase(), family_id: familyId, role: 'A' };
+    enviarCorreo(user.email, '¡Bienvenido a Copaz!', correoBienvenida(name)).catch(() => {});
     res.json({ token: sign(user), user: { id: userId, name, email: user.email, role: 'A' }, inviteCode: invite });
+  });
+
+  // Recuperación de contraseña
+  r.post('/auth/forgot', async (req, res) => {
+    const email = String((req.body && req.body.email) || '').toLowerCase().trim();
+    res.json({ ok: true }); // respondemos igual exista o no (no filtrar cuentas)
+    if (!email) return;
+    const u = (await q(`SELECT id, name FROM users WHERE email=$1`, [email])).rows[0];
+    if (!u) return;
+    const token = crypto.randomBytes(24).toString('hex');
+    const exp = new Date(Date.now() + 3600000).toISOString();
+    await q(`UPDATE users SET reset_token=$1, reset_expires=$2 WHERE id=$3`, [token, exp, u.id]);
+    const front = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+    enviarCorreo(email, 'Restablece tu contraseña de Copaz', correoReset(`${front}/#/reset?token=${token}`)).catch(() => {});
+  });
+  r.post('/auth/reset', async (req, res) => {
+    const { token, password } = req.body || {};
+    if (!token || !password || String(password).length < 6) return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    const u = (await q(`SELECT id FROM users WHERE reset_token=$1 AND reset_expires > now()`, [token])).rows[0];
+    if (!u) return res.status(400).json({ error: 'El enlace es inválido o expiró' });
+    await q(`UPDATE users SET password=$1, reset_token=NULL, reset_expires=NULL WHERE id=$2`, [await hash(password), u.id]);
+    res.json({ ok: true });
   });
 
   // Login
@@ -113,11 +140,54 @@ export function buildRouter(broadcast) {
   const baseUrl = (req) => (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
   const frontUrl = () => (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
 
-  // Estado Premium de la familia
+  // Estado de acceso (prueba + Premium) de la familia
   r.get('/pay/status', requireAuth, async (req, res) => {
-    const f = (await q(`SELECT premium_until, premium_plan FROM families WHERE id=$1`, [req.user.family_id])).rows[0] || {};
-    const activo = !!(f.premium_until && new Date(f.premium_until) > new Date());
-    res.json({ flowReady: flowReady(), premium: { activo, until: f.premium_until || null, plan: f.premium_plan || null } });
+    const f = (await q(`SELECT trial_until, premium_until, premium_plan FROM families WHERE id=$1`, [req.user.family_id])).rows[0] || {};
+    const now = Date.now();
+    const premium = !!(f.premium_until && new Date(f.premium_until).getTime() > now);
+    const enTrial = !!(f.trial_until && new Date(f.trial_until).getTime() > now);
+    res.json({
+      flowReady: flowReady(),
+      access: { premium, enTrial, activo: premium || enTrial, bloqueado: !(premium || enTrial), trialUntil: f.trial_until || null, premiumUntil: f.premium_until || null, plan: f.premium_plan || null },
+    });
+  });
+
+  // Activación manual por el dueño del SaaS (cuando cobras por botón de Flow).
+  // Protegido con ADMIN_KEY (cabecera x-admin-key o body.adminKey).
+  r.post('/admin/activate', async (req, res) => {
+    const key = req.headers['x-admin-key'] || (req.body && req.body.adminKey);
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'No autorizado' });
+    const plan = (req.body.plan === 'anual') ? 'anual' : 'mensual';
+    const p = PLANES[plan];
+    let famId = req.body.familyId;
+    if (!famId && req.body.email) {
+      const u = (await q(`SELECT family_id FROM users WHERE email=$1`, [String(req.body.email).toLowerCase()])).rows[0];
+      famId = u && u.family_id;
+    }
+    if (!famId) return res.status(404).json({ error: 'Familia no encontrada (envía familyId o email)' });
+    const cur = (await q(`SELECT premium_until FROM families WHERE id=$1`, [famId])).rows[0];
+    const desde = (cur && cur.premium_until && new Date(cur.premium_until) > new Date()) ? new Date(cur.premium_until) : new Date();
+    const until = new Date(desde.getTime() + p.dias * 86400000);
+    await q(`UPDATE families SET premium_until=$1, premium_plan=$2 WHERE id=$3`, [until.toISOString(), plan, famId]);
+    broadcast(famId, { type: 'sync' });
+    res.json({ ok: true, familyId: famId, plan, premiumUntil: until.toISOString() });
+  });
+
+  // Lista de familias para el panel de administrador.
+  r.get('/admin/families', async (req, res) => {
+    const key = req.headers['x-admin-key'];
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'No autorizado' });
+    const fams = (await q(`SELECT id, parents, trial_until, premium_until, premium_plan, created_at FROM families ORDER BY created_at DESC LIMIT 500`)).rows;
+    const now = Date.now();
+    const out = [];
+    for (const f of fams) {
+      const us = (await q(`SELECT email FROM users WHERE family_id=$1`, [f.id])).rows;
+      const estado = (f.premium_until && new Date(f.premium_until).getTime() > now) ? 'premium'
+        : (f.trial_until && new Date(f.trial_until).getTime() > now) ? 'prueba' : 'bloqueado';
+      out.push({ id: f.id, emails: us.map(u => u.email).join(', '), miembros: us.length,
+        trialUntil: f.trial_until, premiumUntil: f.premium_until, plan: f.premium_plan, estado });
+    }
+    res.json({ families: out });
   });
 
   // Crea el pago en Flow y devuelve la URL a la que redirigir al usuario.
@@ -130,13 +200,13 @@ export function buildRouter(broadcast) {
     try {
       const result = await flowPost('/payment/create', {
         commerceOrder: order,
-        subject: `Copaz Premium ${p.label} (por cada padre)`,
+        subject: `Copaz Premium ${p.label}`,
         currency: 'CLP',
         amount: p.amount,
         email: u.email,
         urlConfirmation: `${baseUrl(req)}/api/pay/webhook`,
         urlReturn: `${baseUrl(req)}/api/pay/return`,
-        optional: JSON.stringify({ family: req.user.family_id, plan }),
+        optional: req.user.family_id,
       });
       await q(`INSERT INTO payments (id, family_id, "order", plan, amount, status) VALUES ($1,$2,$3,$4,$5,'pending')
         ON CONFLICT ("order") DO NOTHING`, [uid(), req.user.family_id, order, plan, p.amount]);
@@ -151,9 +221,8 @@ export function buildRouter(broadcast) {
     if (!token || !flowReady()) return null;
     const status = await flowPost('/payment/getStatus', { token });
     const pagado = [2, '2'].includes(status.status);
-    let familyId = null, plan = 'mensual';
-    try { const o = JSON.parse(status.optional || '{}'); familyId = o.family; plan = o.plan || 'mensual'; } catch {}
-    if (!familyId && status.commerceOrder) { const parts = String(status.commerceOrder).split('-'); familyId = parts[1]; plan = parts[2] || 'mensual'; }
+    let familyId = status.optional || null, plan = 'mensual';
+    if (status.commerceOrder) { const parts = String(status.commerceOrder).split('-'); if (!familyId) familyId = parts[1]; plan = parts[2] || 'mensual'; }
     if (!pagado || !familyId) { return { pagado, familyId }; }
     const dias = (PLANES[plan] || PLANES.mensual).dias;
     const cur = (await q(`SELECT premium_until FROM families WHERE id=$1`, [familyId])).rows[0];
