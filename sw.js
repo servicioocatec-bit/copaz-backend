@@ -1,5 +1,5 @@
 /* Copaz service worker — cache offline (solo recursos de la app). */
-const CACHE = 'copaz-v15';
+const CACHE = 'copaz-v18';
 
 self.addEventListener('push', (e) => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch { d = {}; }

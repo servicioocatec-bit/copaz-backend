@@ -88,3 +88,4 @@ En `api-client.js`, `API_BASE` ya apunta a tu backend de Railway. Los links de F
 - Dominio propio (ej. `copaz.app`).
 - Verificación de correo al registrarse.
 - Respaldos automáticos de la base (Railway).
+x

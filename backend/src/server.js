@@ -19,8 +19,9 @@ function broadcast(familyId, payload) {
 
 export function createApp() {
   const app = express();
+  app.set('trust proxy', 1); // Railway/proxy: leer la IP real del cliente para el rate limiting.
   app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '6mb' })); // permite adjuntar fotos (boletas/documentos) comprimidas
 
   app.get('/', (_req, res) => res.json({ app: 'Copaz API', status: 'ok' }));
   app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));

@@ -32,3 +32,8 @@ export const correoReset = (link) => wrap('Restablece tu contraseña',
   `<p>Recibimos una solicitud para cambiar tu contraseña. Haz clic en el botón (válido por 1 hora):</p>
    <p style="text-align:center;margin:22px 0"><a href="${link}" style="background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Cambiar mi contraseña</a></p>
    <p style="color:#64748b;font-size:13px">Si no fuiste tú, ignora este correo; tu contraseña seguirá igual.</p>`);
+
+export const correoVerificacion = (nombre, link) => wrap(`Confirma tu correo, ${nombre}`,
+  `<p>¡Gracias por unirte a Copaz! Solo falta confirmar tu correo para activar tu cuenta y poder suscribirte.</p>
+   <p style="text-align:center;margin:22px 0"><a href="${link}" style="background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Verificar mi correo</a></p>
+   <p>Tienes <b>30 días de prueba gratis</b> de Premium. ¡Que lo disfrutes!</p>`);

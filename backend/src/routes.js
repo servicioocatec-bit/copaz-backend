@@ -5,7 +5,10 @@ import webpush from 'web-push';
 import { q, familyState } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 import { flowReady, flowPost } from './flow.js';
-import { enviarCorreo, correoBienvenida, correoReset } from './mail.js';
+import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion } from './mail.js';
+
+/* Groserías/insultos que se bloquean en los mensajes (también validado en el cliente). */
+const GROSERIAS = /\b(cs?m|ctm|conch[ae]?(?:tumadre| de tu madre|etumare)?|culi[aá]?[oa]s?|maric[oó]n(?:es)?|maraco|hij[oa] de (?:puta|perra)|hdp|hijueputa|malpar[ií]d[oa]|mierda|put[ao]s?|put[ao]n|zorra|imb[eé]cil(?:es)?|idiota|est[uú]pid[oa]s?|tarad[oa]s?|in[uú]til(?:es)?|pendej[oa]s?|boludo|pelotudo|cabr[oó]n|verga|garca|forro|gonorrea|malnacid[oa]|infeliz|cretin[oa]|subnormal|retrasad[oa]|desgraciad[oa]|anda a la (?:mierda|conch)|vete a la mierda|chucha (?:tu|de)|reculiad[oa])\b/i;
 
 /* Planes Premium (por cada padre). Días de vigencia que otorga cada pago. */
 const PLANES = {
@@ -35,8 +38,28 @@ async function sendPush(familyId, exceptRole, payload) {
   }));
 }
 
+/* Limitador simple por IP (anti fuerza-bruta / abuso), sin dependencias. */
+function makeIpLimiter(windowMs, max) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'x';
+    const now = Date.now();
+    if (hits.size > 8000) hits.clear();
+    let e = hits.get(ip);
+    if (!e || now > e.reset) { e = { count: 0, reset: now + windowMs }; hits.set(ip, e); }
+    e.count++;
+    if (e.count > max) return res.status(429).json({ error: 'Demasiadas solicitudes. Espera un momento e intenta de nuevo.' });
+    next();
+  };
+}
+
 export function buildRouter(broadcast) {
   const r = express.Router();
+
+  // Anti-abuso: límites por IP en las rutas sensibles.
+  r.use('/auth', makeIpLimiter(60 * 1000, 40));   // 40 intentos/min de login-registro-reset por IP
+  r.use('/pay', makeIpLimiter(60 * 1000, 30));
+  r.use('/admin', makeIpLimiter(60 * 1000, 60));
 
   /* ------------------------------ AUTH ------------------------------ */
 
@@ -59,12 +82,35 @@ export function buildRouter(broadcast) {
       [familyId, invite, JSON.stringify({ A: name, B: '' }), trialUntil]);
 
     const userId = uid();
-    await q(`INSERT INTO users (id, email, password, name, family_id, role) VALUES ($1,$2,$3,$4,$5,'A')`,
-      [userId, email.toLowerCase(), await hash(password), name, familyId]);
+    const vtoken = crypto.randomBytes(24).toString('hex');
+    await q(`INSERT INTO users (id, email, password, name, family_id, role, email_verified, verify_token) VALUES ($1,$2,$3,$4,$5,'A',false,$6)`,
+      [userId, email.toLowerCase(), await hash(password), name, familyId, vtoken]);
 
     const user = { id: userId, email: email.toLowerCase(), family_id: familyId, role: 'A' };
-    enviarCorreo(user.email, '¡Bienvenido a Copaz!', correoBienvenida(name)).catch(() => {});
-    res.json({ token: sign(user), user: { id: userId, name, email: user.email, role: 'A' }, inviteCode: invite });
+    const front = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+    enviarCorreo(user.email, 'Verifica tu correo — Copaz', correoVerificacion(name, `${front}/#/verify?token=${vtoken}`)).catch(() => {});
+    res.json({ token: sign(user), user: { id: userId, name, email: user.email, role: 'A', verified: false }, inviteCode: invite });
+  });
+
+  // Verificar correo con el token del enlace.
+  r.post('/auth/verify', async (req, res) => {
+    const token = (req.body && req.body.token) || '';
+    if (!token) return res.status(400).json({ error: 'Falta el token' });
+    const u = (await q(`SELECT id FROM users WHERE verify_token=$1`, [token])).rows[0];
+    if (!u) return res.status(400).json({ error: 'Enlace inválido o ya usado' });
+    await q(`UPDATE users SET email_verified=true, verify_token=NULL WHERE id=$1`, [u.id]);
+    res.json({ ok: true });
+  });
+  // Reenviar el correo de verificación.
+  r.post('/auth/resend-verify', requireAuth, async (req, res) => {
+    const u = (await q(`SELECT email, name, email_verified FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (u.email_verified) return res.json({ ok: true, yaVerificado: true });
+    const vtoken = crypto.randomBytes(24).toString('hex');
+    await q(`UPDATE users SET verify_token=$1 WHERE id=$2`, [vtoken, req.user.uid]);
+    const front = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+    enviarCorreo(u.email, 'Verifica tu correo — Copaz', correoVerificacion(u.name || '', `${front}/#/verify?token=${vtoken}`)).catch(() => {});
+    res.json({ ok: true });
   });
 
   // Recuperación de contraseña
@@ -95,7 +141,7 @@ export function buildRouter(broadcast) {
     if (!email || !password) return res.status(400).json({ error: 'Faltan datos' });
     const u = (await q(`SELECT * FROM users WHERE email=$1`, [String(email).toLowerCase()])).rows[0];
     if (!u || !(await compare(password, u.password))) return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
-    res.json({ token: sign(u), user: { id: u.id, name: u.name, email: u.email, role: u.role } });
+    res.json({ token: sign(u), user: { id: u.id, name: u.name, email: u.email, role: u.role, verified: u.email_verified === true } });
   });
 
   // Unirse a la familia del otro padre con el código de invitación (rol B).
@@ -122,6 +168,8 @@ export function buildRouter(broadcast) {
   r.get('/state', requireAuth, async (req, res) => {
     const state = await familyState(req.user.family_id);
     if (!state) return res.status(404).json({ error: 'Familia no encontrada' });
+    const me = (await q(`SELECT email_verified FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    state.me = { verified: !!(me && me.email_verified) };
     res.json(state);
   });
 
@@ -195,7 +243,8 @@ export function buildRouter(broadcast) {
     const plan = req.body.plan === 'anual' ? 'anual' : 'mensual';
     const p = PLANES[plan];
     if (!flowReady()) return res.status(503).json({ error: 'El cobro con Flow aún no está configurado en el servidor.' });
-    const u = (await q(`SELECT email FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    const u = (await q(`SELECT email, email_verified FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    if (!u || !u.email_verified) return res.status(403).json({ error: 'Verifica tu correo antes de suscribirte.', necesitaVerificar: true });
     const order = `COPAZ-${req.user.family_id}-${plan}-${Date.now()}`;
     try {
       const result = await flowPost('/payment/create', {
@@ -269,6 +318,7 @@ export function buildRouter(broadcast) {
   r.post('/messages', requireAuth, async (req, res) => {
     const text = String(req.body.text || '').trim();
     if (!text) return res.status(400).json({ error: 'Mensaje vacío' });
+    if (GROSERIAS.test(text)) return res.status(400).json({ error: 'El mensaje contiene lenguaje ofensivo. Reformúlalo, por favor.', ofensivo: true });
     const id = uid(); const ts = Date.now();
     await q(`INSERT INTO messages (id, family_id, sender, role, text, ts) VALUES ($1,$2,$3,$4,$5,$6)`,
       [id, req.user.family_id, req.user.uid, req.user.role, text, ts]);

@@ -53,6 +53,8 @@ const Cloud = {
   join(inviteCode)                { return this.req('POST', '/api/family/join', { inviteCode }); },
   forgot(email)                   { return this.req('POST', '/api/auth/forgot', { email }); },
   reset(token, password)          { return this.req('POST', '/api/auth/reset', { token, password }); },
+  verify(token)                   { return this.req('POST', '/api/auth/verify', { token }); },
+  resendVerify()                  { return this.req('POST', '/api/auth/resend-verify'); },
 
   // --- Estado ---
   state()             { return this.req('GET', '/api/state'); },

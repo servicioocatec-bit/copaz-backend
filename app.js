@@ -30,6 +30,29 @@ function toast(msg) {
 }
 async function act(fn) { try { await fn(); } catch (e) { toast(e.message || 'Ocurrió un error'); } }
 
+/* Comprime y redimensiona una imagen (foto de boleta/documento) a un data URL liviano. */
+function comprimirImagen(file, maxDim = 1400, quality = 0.62) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type)) return reject(new Error('Selecciona una imagen'));
+    const img = new Image(); const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.width, h = img.height;
+      if (w > h && w > maxDim) { h = Math.round(h * maxDim / w); w = maxDim; }
+      else if (h > maxDim) { w = Math.round(w * maxDim / h); h = maxDim; }
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('No se pudo leer la imagen')); };
+    img.src = url;
+  });
+}
+function verImagen(src) {
+  openSheet('Foto', `<img src="${src}" style="width:100%;border-radius:12px;display:block">
+    <a class="btn block outline" href="${src}" download="copaz-foto.jpg" style="margin-top:12px">Descargar</a>`);
+}
+
 /* --------------------------- Config / modo ------------------------------ */
 const API_BASE = (window.COPAZ_CONFIG && window.COPAZ_CONFIG.API_BASE) || '';
 const CLOUD = !!API_BASE;
@@ -203,14 +226,19 @@ const currentRoute = () => { const h = location.hash.replace('#/', '').split('/'
 const go = (r) => { location.hash = '#/' + r; };
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', boot);
-async function boot() { await Store.init(); render(); if (localStorage.getItem('copaz.pushOn')) enablePush(false).catch(() => {}); }
+function aplicarTema() { const t = localStorage.getItem('copaz.theme'); if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); else document.documentElement.removeAttribute('data-theme'); }
+function alternarTema() { const nuevo = localStorage.getItem('copaz.theme') === 'dark' ? 'light' : 'dark'; localStorage.setItem('copaz.theme', nuevo); aplicarTema(); closeSheet(); render(); toast(nuevo === 'dark' ? '🌙 Modo oscuro' : '☀️ Modo claro'); }
+async function boot() { aplicarTema(); await Store.init(); render(); if (localStorage.getItem('copaz.pushOn')) enablePush(false).catch(() => {}); }
 
 /* ================================ RENDER =============================== */
 function render() {
   const nav = $('#nav');
-  // Enlace de restablecer contraseña (llega por correo con ?token=)
+  // Enlaces que llegan por correo (?token=)
   if (CLOUD && location.hash.indexOf('/reset') >= 0 && location.hash.indexOf('token=') >= 0) {
     nav.classList.add('hidden'); return renderAuth('reset');
+  }
+  if (CLOUD && location.hash.indexOf('/verify') >= 0 && location.hash.indexOf('token=') >= 0) {
+    nav.classList.add('hidden'); return renderAuth('verify');
   }
   // Puertas de acceso
   if (Store.mode === 'cloud') {
@@ -369,6 +397,16 @@ function renderAuth(screen) {
       await Cloud.reset(token, pass);
       toast('¡Contraseña actualizada! Ya puedes entrar.'); location.hash = ''; renderAuth('login');
     });
+  } else if (screen === 'verify') {
+    const token = (location.hash.match(/token=([^&]+)/) || [])[1] || '';
+    app.innerHTML = authShell('Verificando tu correo', `<div class="empty"><div class="ic">⏳</div><p id="vf-msg">Un momento…</p></div>
+      <p class="hint" style="text-align:center;margin-top:14px"><a onclick="location.hash='';go('inicio');render()">Ir a la app</a></p>`);
+    act(async () => {
+      try { await Cloud.verify(token); $('#vf-msg').innerHTML = '✅ ¡Correo verificado! Ya puedes suscribirte.'; }
+      catch (e) { $('#vf-msg').textContent = '⚠️ ' + (e.message || 'El enlace no es válido o ya se usó.'); }
+      // refrescar estado si hay sesión
+      if (Cloud.token) { try { await Store.refresh(); } catch {} }
+    });
   } else if (screen === 'join') {
     app.innerHTML = authShell('Unirme con un código', `
       <p class="hint" style="margin-bottom:14px">Primero necesitas una cuenta. Si aún no tienes, créala y luego vincula con el código que te dio el otro padre.</p>
@@ -464,8 +502,12 @@ function viewInicio(app) {
     : dp > 0
       ? `<div class="card tight" onclick="modalPlanes()" style="cursor:pointer;background:var(--teal-50);border-color:var(--teal-200)"><div style="font-size:13px;color:var(--teal-800)">🎁 Te quedan ${dp} día${dp !== 1 ? 's' : ''} de prueba Premium · <b>ver planes</b></div></div>`
       : `<div class="card tight" onclick="modalPlanes()" style="cursor:pointer;background:#fff7ed;border-color:#fed7aa"><div style="font-size:13px;color:#9a3412">Tu prueba terminó · <b>suscríbete a Premium</b></div></div>`;
+  const verifBanner = (CLOUD && D().me && D().me.verified === false)
+    ? `<div class="card tight" style="background:#fff7ed;border-color:#fed7aa"><div style="font-size:13px;color:#9a3412">📧 Verifica tu correo para poder suscribirte. <a onclick="reenviarVerificacion()" style="font-weight:700">Reenviar correo</a></div></div>`
+    : '';
 
   app.innerHTML = topbar('Hola, ' + miNombre, fechaLarga(hoy)) + `<div class="screen">
+    ${verifBanner}
     ${banner}
     <div class="hero">
       <div class="label">Hoy están con</div>
@@ -677,7 +719,7 @@ function viewGastos(app) {
 function gastoRow(e) {
   const kid = D().kids.find(k => k.id === e.kid), debeOtro = e.amount * (1 - e.split / 100);
   return `<div class="list-row"><div class="avatar" style="background:${color(e.payer)}">${inicial(nombre(e.payer))}</div>
-    <div class="body" style="cursor:pointer" onclick="modalGasto('${e.id}')"><div class="t">${esc(e.title)} ${e.settled ? '<span class="badge green">saldado</span>' : ''}</div>
+    <div class="body" style="cursor:pointer" onclick="modalGasto('${e.id}')"><div class="t">${esc(e.title)} ${e.settled ? '<span class="badge green">saldado</span>' : ''} ${e.receipt ? '<span class="badge gray">📷</span>' : ''}</div>
       <div class="s">${fechaLarga(e.date)} · ${esc(e.cat)}${kid ? ' · '+esc(kid.name) : ''} · pagó ${esc(nombre(e.payer))}</div></div>
     <div class="meta"><div style="font-weight:800;color:var(--ink);font-size:15px">${money(e.amount)}</div>
       <div style="font-size:11.5px">${e.settled ? '' : `${esc(nombre(e.payer==='A'?'B':'A'))} debe ${money(debeOtro)}`}</div>
@@ -700,16 +742,24 @@ function modalGasto(id) {
     <div class="field"><label>División <span class="hint" id="gx-splitlbl">${split}% / ${100 - split}%</span></label>
       <input id="gx-s" type="range" min="0" max="100" step="5" value="${split}">
       <div class="hint">Porcentaje que le corresponde a quien pagó. El resto lo debe el otro.</div></div>
+    <div class="field"><label>Foto de la boleta (opcional)</label><input id="gx-img" type="file" accept="image/*">
+      <div id="gx-prev" style="margin-top:8px">${e && e.receipt ? `<img src="${e.receipt}" onclick="verReciboGasto('${e.id}')" style="width:100%;max-height:200px;object-fit:contain;border-radius:12px;border:1px solid var(--line);cursor:pointer">` : ''}</div></div>
     <button class="btn block" id="gx-save">${e ? 'Guardar cambios' : 'Guardar gasto'}</button>
     ${e ? `<button class="btn block outline" id="gx-del" style="margin-top:10px">Eliminar gasto</button>` : ''}`);
   segBind('#gx-p');
   const rng = $('#gx-s'), lbl = $('#gx-splitlbl');
   rng.oninput = () => { lbl.textContent = `${rng.value}% / ${100 - rng.value}%`; };
+  let receiptData = e && e.receipt ? e.receipt : '';
+  $('#gx-img').onchange = (ev) => act(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    receiptData = await comprimirImagen(f);
+    $('#gx-prev').innerHTML = `<img src="${receiptData}" style="width:100%;max-height:200px;object-fit:contain;border-radius:12px;border:1px solid var(--line)">`;
+  });
   $('#gx-save').onclick = () => act(async () => {
     const title = $('#gx-t').value.trim(), amount = parseFloat($('#gx-a').value);
     if (!title) return toast('Escribe el concepto');
     if (!amount || amount <= 0) return toast('Escribe un monto válido');
-    const data = { title, amount, date: $('#gx-d').value, payer: segVal('#gx-p'), split: parseInt(rng.value, 10), cat: $('#gx-c').value, kid: $('#gx-k').value, settled: e ? e.settled : false };
+    const data = { title, amount, date: $('#gx-d').value, payer: segVal('#gx-p'), split: parseInt(rng.value, 10), cat: $('#gx-c').value, kid: $('#gx-k').value, settled: e ? e.settled : false, receipt: receiptData || '' };
     if (e) await Store.update('expenses', id, data); else await Store.create('expenses', data);
     closeSheet(); render(); toast(e ? 'Gasto actualizado' : 'Gasto registrado');
   });
@@ -816,8 +866,18 @@ function suavizarMensaje() {
   input.focus();
   toast('Sugerencia lista — revísala antes de enviar');
 }
+/* Lista de groserías/insultos que se BLOQUEAN al enviar. */
+const GROSERIAS = /\b(cs?m|ctm|conch[ae]?(?:tumadre| de tu madre|etumare)?|culi[aá]?[oa]s?|maric[oó]n(?:es)?|maraco|weon culi|hij[oa] de (?:puta|perra)|hdp|hijueputa|malpar[ií]d[oa]|mierda|put[ao]s?|put[ao]n|zorra|perr[ao] (?:asquerosa|inmunda)|imb[eé]cil(?:es)?|idiota|est[uú]pid[oa]s?|tarad[oa]s?|in[uú]til(?:es)?|pendej[oa]s?|boludo|pelotudo|cabr[oó]n|verga|garca|forro|gonorrea|malnacid[oa]|infeliz|cretin[oa]|subnormal|retrasad[oa]|desgraciad[oa]|anda a la (?:mierda|conch)|vete a la mierda|chucha (?:tu|de)|reculiad[oa])\b/i;
+function tieneGroseria(text) { return GROSERIAS.test(String(text || '')); }
+
 function enviarMensaje() {
   const input = $('#msg-in'), text = input.value.trim(); if (!text) return;
+  if (tieneGroseria(text)) {
+    const tone = $('#tone');
+    if (tone) { tone.className = 'tone warn'; tone.innerHTML = '🚫 Ese mensaje contiene lenguaje ofensivo. Reformúlalo para mantener la paz. <button class="btn sm" style="margin-left:6px;padding:4px 10px" onclick="suavizarMensaje()">✨ Suavizar</button>'; }
+    toast('No se puede enviar: contiene lenguaje ofensivo');
+    return;
+  }
   input.value = '';
   act(async () => { await Store.sendMessage(text); render(); });
 }
@@ -890,21 +950,33 @@ function modalHijo(id) {
 }
 const delHijo = (id) => act(async () => { if (D().kids.length <= 1) return toast('Debe quedar al menos un hijo/a'); await Store.remove('kids', id); closeSheet(); render(); toast('Eliminado'); });
 function docRow(d) {
-  return `<div class="list-row"><div class="avatar" style="background:#64748b">📄</div>
-    <div class="body"><div class="t">${esc(d.name)}</div><div class="s">${esc(d.cat)} · ${fechaLarga(d.date)}${d.note ? ' · '+esc(d.note) : ''}</div></div>
+  const thumb = d.image
+    ? `<div onclick="verImagenDoc('${d.id}')" style="width:44px;height:44px;border-radius:10px;background:center/cover no-repeat url('${d.image}');cursor:pointer;flex-shrink:0"></div>`
+    : `<div class="avatar" style="background:#64748b">📄</div>`;
+  return `<div class="list-row">${thumb}
+    <div class="body" ${d.image ? `style="cursor:pointer" onclick="verImagenDoc('${d.id}')"` : ''}><div class="t">${esc(d.name)} ${d.image ? '<span class="badge gray">📷 foto</span>' : ''}</div><div class="s">${esc(d.cat)} · ${fechaLarga(d.date)}${d.note ? ' · '+esc(d.note) : ''}</div></div>
     <button class="btn sm ghost" onclick="delDoc('${d.id}')">✕</button></div>`;
 }
+const verImagenDoc = (id) => { const d = D().docs.find(x => x.id === id); if (d && d.image) verImagen(d.image); };
+const verReciboGasto = (id) => { const e = D().expenses.find(x => x.id === id); if (e && e.receipt) verImagen(e.receipt); };
 function modalDoc() {
-  openSheet('Registrar documento', `
-    <div class="field"><label>Nombre del documento</label><input id="d-name" placeholder="Ej. Convenio de custodia"></div>
-    <div class="field"><label>Categoría</label><select id="d-cat"><option>Legal</option><option>Salud</option><option>Escuela</option><option>Identidad</option><option>Seguro</option><option>Otro</option></select></div>
-    <div class="field"><label>Nota</label><input id="d-note" placeholder="Vigencia, ubicación física…"></div>
-    <p class="hint">Aquí registras la ficha del documento. La subida de archivos llega con la siguiente actualización.</p>
+  openSheet('Registrar documento o boleta', `
+    <div class="field"><label>Nombre</label><input id="d-name" placeholder="Ej. Convenio de custodia, boleta colegiatura…"></div>
+    <div class="field"><label>Categoría</label><select id="d-cat"><option>Legal</option><option>Salud</option><option>Escuela</option><option>Boleta</option><option>Identidad</option><option>Seguro</option><option>Otro</option></select></div>
+    <div class="field"><label>Nota</label><input id="d-note" placeholder="Vigencia, detalle…"></div>
+    <div class="field"><label>Foto (opcional)</label><input id="d-img" type="file" accept="image/*">
+      <div id="d-prev" style="margin-top:8px"></div><div class="hint">Toma o elige una foto de la boleta o documento. Se comprime sola.</div></div>
     <button class="btn block" id="d-save">Guardar</button>`);
+  let imgData = '';
+  $('#d-img').onchange = (e) => act(async () => {
+    const f = e.target.files[0]; if (!f) return;
+    imgData = await comprimirImagen(f);
+    $('#d-prev').innerHTML = `<img src="${imgData}" style="width:100%;max-height:220px;object-fit:contain;border-radius:12px;border:1px solid var(--line)">`;
+  });
   $('#d-save').onclick = () => act(async () => {
     const name = $('#d-name').value.trim(); if (!name) return toast('Escribe el nombre');
-    await Store.create('docs', { name, cat: $('#d-cat').value, date: today(), note: $('#d-note').value.trim() });
-    closeSheet(); render(); toast('Documento registrado');
+    await Store.create('docs', { name, cat: $('#d-cat').value, date: today(), note: $('#d-note').value.trim(), image: imgData || '' });
+    closeSheet(); render(); toast('Guardado');
   });
 }
 const delDoc = (id) => act(async () => { await Store.remove('docs', id); render(); toast('Eliminado'); });
@@ -956,6 +1028,7 @@ function modalAjustes() {
     <div class="field"><label>Moneda</label><select id="st-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}" ${f.currency===c?'selected':''}>${c}</option>`).join('')}</select></div>
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
+    <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
     ${inviteRow}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
     <p class="hint" style="text-align:center;margin-top:14px">Copaz v1 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
@@ -1010,6 +1083,7 @@ function modalPlanes() {
   `);
 }
 const iniciarPrueba = () => { localStorage.setItem('copaz.trialStart', new Date().toISOString()); closeSheet(); render(); toast('¡30 días de Premium activados! 🎉'); };
+const reenviarVerificacion = () => act(async () => { await Cloud.resendVerify(); toast('Correo de verificación reenviado 📧'); });
 function premiumActivo() {
   if (CLOUD) return !!(F() && F().access && F().access.premium);
   const p = F() && F().premium; return !!(p && p.until && new Date(p.until) > new Date());
@@ -1026,6 +1100,7 @@ async function irAFlow(plan) {
       const r = await Cloud.payCreate(plan);
       if (r && r.url) { window.location.href = r.url; return; }
     } catch (e) {
+      if (/erifica/.test(e.message || '')) { toast('Verifica tu correo antes de suscribirte 📧'); closeSheet(); return; }
       if (FLOW[plan]) { window.open(FLOW[plan], '_blank', 'noopener'); return; } // respaldo: botón de pago
       toast(e.message || 'No se pudo iniciar el pago'); return;
     }
@@ -1078,5 +1153,6 @@ Object.assign(window, {
   go, renderAuth, calMove, modalDia, modalEvento, delEvento, modalEsquema, modalGasto, saldar, saldarTodo,
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
   modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,
-  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota,
+  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota, reenviarVerificacion, alternarTema,
+  verImagen, verImagenDoc, verReciboGasto,
 });

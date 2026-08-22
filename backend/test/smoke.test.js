@@ -137,6 +137,22 @@ try {
   r = await api('GET', '/api/admin/families', null, null, { 'x-admin-key': 'testadmin' });
   ok(r.status === 200 && Array.isArray(r.body.families) && r.body.families.length >= 1, 'admin lista familias');
 
+  // 16. Verificación de correo
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(r.body.me && r.body.me.verified === false, 'Usuario nuevo empieza sin verificar');
+  const vRow = (await pool.query(`SELECT verify_token FROM users WHERE email='pedro@test.com'`)).rows[0];
+  ok(vRow && vRow.verify_token, 'Registro genera token de verificación');
+  r = await api('POST', '/api/auth/verify', { token: vRow.verify_token });
+  ok(r.status === 200 && r.body.ok, 'Verifica el correo con el token');
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(r.body.me.verified === true, 'El estado queda verificado');
+
+  // 17. Bloqueo de groserías en mensajes
+  r = await api('POST', '/api/messages', { text: 'eres un idiota' }, tokenB);
+  ok(r.status === 400 && r.body.ofensivo, 'Bloquea mensaje con lenguaje ofensivo');
+  r = await api('POST', '/api/messages', { text: 'gracias, nos vemos el jueves' }, tokenB);
+  ok(r.status === 200, 'Permite mensaje respetuoso');
+
   console.log(`\n✅ ${pass} pruebas pasaron. Backend funciona de extremo a extremo.`);
 } catch (e) {
   console.error('\n❌ Falló una prueba:', e.message);

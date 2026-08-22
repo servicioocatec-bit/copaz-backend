@@ -75,6 +75,11 @@ export async function migrate() {
   // Recuperación de contraseña.
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT;`);
   await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires TIMESTAMPTZ;`);
+  // Verificación de correo.
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT false;`);
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verify_token TEXT;`);
+  // Cuentas ya existentes (sin token de verificación pendiente) se marcan como verificadas.
+  await q(`UPDATE users SET email_verified=true WHERE email_verified IS NOT TRUE AND verify_token IS NULL`);
 
   // Estado de acceso de la familia: prueba gratis + Premium (se activan/vencen en el servidor).
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS trial_until TIMESTAMPTZ;`);

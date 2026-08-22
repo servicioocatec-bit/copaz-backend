@@ -11,6 +11,14 @@
   --nav-h:64px; --sidebar-w:248px;
   --font:'Segoe UI',system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;
 }
+:root[data-theme="dark"] {
+  --teal-50:#0e2b25; --teal-100:#123a32; --teal-200:#1c5147;
+  --coral-soft:#3a1d0a;
+  --ink:#e6efec; --slate:#9fb4ac; --muted:#6f857c;
+  --line:#233029; --bg:#0c1512; --card:#131e19;
+  --shadow:0 1px 3px rgba(0,0,0,.45), 0 8px 24px rgba(0,0,0,.4);
+  --shadow-lg:0 12px 40px rgba(0,0,0,.55);
+}
 * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
 html,body { height:100%; }
 body {
@@ -124,7 +132,7 @@ a { color:var(--teal-700); }
 .field label { display:block; font-size:13px; font-weight:600; color:var(--slate); margin-bottom:6px; }
 .field input, .field select, .field textarea {
   width:100%; padding:12px 13px; border:1.5px solid var(--line); border-radius:12px;
-  background:#fff; color:var(--ink); transition:.12s; }
+  background:var(--card); color:var(--ink); transition:.12s; }
 .field input:focus, .field select:focus, .field textarea:focus {
   outline:none; border-color:var(--teal-500); box-shadow:0 0 0 3px var(--teal-100); }
 .field textarea { resize:vertical; min-height:88px; line-height:1.5; }
@@ -132,7 +140,7 @@ a { color:var(--teal-700); }
 .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .seg { display:flex; gap:6px; flex-wrap:wrap; }
 .seg button { flex:1; padding:10px; border:1.5px solid var(--line); border-radius:11px;
-  font-weight:600; font-size:13px; color:var(--slate); background:#fff; }
+  font-weight:600; font-size:13px; color:var(--slate); background:var(--card); }
 .seg button.on { border-color:var(--teal-500); background:var(--teal-50); color:var(--teal-700); }
 
 /* Calendar */
@@ -160,11 +168,11 @@ a { color:var(--teal-700); }
 .msg .time { font-size:11px; color:var(--muted); margin-top:5px; }
 .msg.me { align-self:flex-end; background:var(--teal-600); color:#fff; border-bottom-right-radius:5px; }
 .msg.me .time { color:rgba(255,255,255,.75); }
-.msg.them { align-self:flex-start; background:#fff; border:1px solid var(--line); border-bottom-left-radius:5px; }
+.msg.them { align-self:flex-start; background:var(--card); border:1px solid var(--line); border-bottom-left-radius:5px; }
 .composer { position:sticky; bottom:0; background:var(--bg); padding:10px 0 4px; }
 .composer .box { display:flex; gap:8px; align-items:flex-end; }
 .composer textarea { flex:1; min-height:46px; max-height:120px; padding:12px 13px;
-  border:1.5px solid var(--line); border-radius:16px; background:#fff; resize:none; }
+  border:1.5px solid var(--line); border-radius:16px; background:var(--card); resize:none; }
 .composer .send { width:46px; height:46px; border-radius:14px; background:var(--teal-600); color:#fff;
   display:grid; place-items:center; font-size:19px; flex-shrink:0; }
 .tone { font-size:12.5px; padding:8px 12px; border-radius:11px; margin-bottom:8px; display:none; }
