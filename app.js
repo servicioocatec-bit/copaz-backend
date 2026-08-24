@@ -116,6 +116,11 @@ const Store = {
     if (this.mode === 'cloud') { await Cloud.remove(entity, id); await this.refresh(); }
     else { this.state[entity] = (this.state[entity] || []).filter(x => x.id !== id); this._save(); }
   },
+  // Crea muchos registros de una entidad refrescando una sola vez al final.
+  async bulkCreate(entity, arr) {
+    if (this.mode === 'cloud') { for (const o of arr) await Cloud.create(entity, o); await this.refresh(); }
+    else { for (const o of arr) (this.state[entity] = this.state[entity] || []).push({ id: uid(), ...o }); this._save(); }
+  },
   async sendMessage(text, image) {
     if (this.mode === 'cloud') { await Cloud.sendMessage(text, image); await this.refresh(); }
     else { this.state.messages.push({ id: uid(), from: this.state.auth.role, text, image: image || '', ts: Date.now() }); this._save(); }
@@ -1006,7 +1011,8 @@ function modalHijoVer(id) {
         <div style="color:var(--slate)">${k.dob ? calcEdad(k.dob)+' años · '+k.dob : 'Sin fecha de nacimiento'}</div></div></div>
     <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Notas de horario</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
     <div style="margin-top:14px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">📚 Horario de materias</div>${horarioGrid(k.timetable)}
-      <button class="btn block outline" style="margin-top:8px" onclick="modalHorario('${k.id}')">Editar horario de materias</button></div>
+      <button class="btn block outline" style="margin-top:8px" onclick="modalHorario('${k.id}')">Editar horario de materias</button>
+      <button class="btn block ghost" style="margin-top:8px" onclick="cargarDatosColegio('${k.id}')">📥 Cargar datos del colegio (6° básico)</button></div>
     <div class="row2" style="margin-top:18px"><button class="btn ghost" onclick="modalHijo('${k.id}')">Editar datos</button><button class="btn outline" onclick="delHijo('${k.id}')">Eliminar</button></div>`);
 }
 /* ---- Horario de materias (grilla semanal por hijo) ---- */
@@ -1063,6 +1069,93 @@ function ttAdd(id) {
 }
 function ttDel(id, i) {
   act(async () => { const k = D().kids.find(x => x.id === id); const tt = (k.timetable || []).slice(); tt.splice(i, 1); await Store.update('kids', id, { ...k, timetable: tt }); modalHorario(id); });
+}
+/* ---- Preset: Colegio Conquistadores · 6° básico 2026 ----
+   Horario semanal de materias + calendario de evaluaciones + profesores.
+   Se carga con un toque en el perfil del hijo/a. */
+const COLE_HORARIO = (() => {
+  const B = (day, blocks) => blocks.map(([start, end, subject]) => ({ day, start, end, subject, room: '' }));
+  return [].concat(
+    B('Lun', [['08:15','09:00','Historia y Cs. Sociales'],['09:00','09:45','Historia y Cs. Sociales'],['10:00','10:45','Artes visuales'],['10:45','11:30','Artes visuales'],['11:45','12:30','Religión'],['12:30','13:15','Religión'],['14:00','14:45','Lenguaje'],['14:45','15:30','Lenguaje']]),
+    B('Mar', [['08:15','09:00','Historia y Cs. Sociales'],['09:00','09:45','Historia y Cs. Sociales'],['10:00','10:45','Cs. Naturales'],['10:45','11:30','Cs. Naturales'],['11:45','12:30','Matemáticas'],['12:30','13:15','Matemáticas'],['14:00','14:45','Taller: Poder de los números'],['14:45','15:30','Taller: Poder de los números'],['16:00','17:30','Taekwondo']]),
+    B('Mié', [['08:15','09:00','Inglés'],['09:00','09:45','Orientación'],['10:00','10:45','Ed. Física'],['10:45','11:30','Ed. Física'],['11:45','12:30','Tecnología'],['12:30','13:15','Tecnología'],['14:00','14:45','Música'],['14:45','15:30','Música'],['16:00','17:30','Teatro']]),
+    B('Jue', [['08:15','09:00','Matemáticas'],['09:00','09:45','Matemáticas'],['10:00','10:45','Lenguaje'],['10:45','11:30','Lenguaje'],['11:45','12:30','Cs. Naturales'],['12:30','13:15','Cs. Naturales'],['14:00','14:45','Taller: Conquistadores de libros'],['14:45','15:30','Taller: Conquistadores de libros'],['16:00','17:30','Danza/fútbol']]),
+    B('Vie', [['08:15','09:00','Lenguaje'],['09:00','09:45','Lenguaje'],['10:00','10:45','Matemáticas'],['10:45','11:30','Matemáticas'],['11:45','12:30','Inglés'],['12:30','13:15','Inglés']])
+  );
+})();
+const COLE_PROFES = [
+  'Profesores 6° básico:',
+  'Lenguaje / Religión: Elsa Díaz — e.diazconquistadores@gmail.com',
+  'Inglés: Francisca Tello — f.telloconquistadores@gmail.com',
+  'Matemáticas / Orientación: Francisca Moroso — f.morosoconquistadores@gmail.com',
+  'Historia y Cs. Sociales: Juan Pablo Castillo — jp.castilloconquistadores@gmail.com',
+  'Cs. Naturales: Magda Aranda — m.arandaconquistadores@gmail.com',
+  'Tecnología / Artes visuales: Mariana Paradela — m.paradelaconquistadores@gmail.com',
+  'Música: Rodrigo Araya — r.arayaconquistadores@gmail.com',
+  'Ed. Física: Jorge Rodríguez — j.rodriguezconquistadores@gmail.com',
+].join('\n');
+const COLE_EVALS = [
+  ['2026-08-03','Formativa','Lenguaje','Lectura domiciliaria 30%: “Un secreto en mi colegio”'],
+  ['2026-08-04','Sumativa','Artes visuales','Bajorrelieve'],
+  ['2026-08-05','Sumativa','Tecnología','Disertación sobre la evolución de un objeto tecnológico'],
+  ['2026-08-06','Formativa','Lenguaje','Lectura domiciliaria 70%: “Un secreto en mi colegio”'],
+  ['2026-08-07','Sumativa','Matemáticas','Suma y resta, números decimales (multiplicación y división)'],
+  ['2026-08-10','Sumativa','Lenguaje','Elementos textuales, infografías, textos de opinión'],
+  ['2026-08-10','Sumativa','Historia','Regiones de Chile'],
+  ['2026-08-13','Sumativa','Cs. Naturales','Lección 5: Energía'],
+  ['2026-08-19','Sumativa','Tecnología','Diseño de idea e innovación tecnológica'],
+  ['2026-08-24','Sumativa','Artes visuales','Escultura con materiales reciclados'],
+  ['2026-08-24','Sumativa','Religión','Empatía y tolerancia'],
+  ['2026-08-24','Formativa','Lenguaje','Lectura domiciliaria 30%: “La guerra del bosque”'],
+  ['2026-08-26','Sumativa','Ed. Física','Ejecución correcta de una danza nacional'],
+  ['2026-08-27','Formativa','Lenguaje','Lectura domiciliaria 70%: “La guerra del bosque”'],
+  ['2026-08-28','Sumativa','Música','Unidad n°3 y repertorio'],
+  ['2026-09-03','Sumativa','Matemáticas','Juego matemático'],
+  ['2026-09-04','Sumativa','Inglés','Present perfect – have/has'],
+  ['2026-09-25','Sumativa','Ed. Física','Presentación gala de raíz folclórica'],
+  ['2026-09-28','Sumativa','Lenguaje','Artículos informativos, claves textuales, comparar noticias'],
+  ['2026-10-09','Sumativa','Inglés','Properties / Passive voice'],
+  ['2026-10-09','Sumativa','Música','Repertorio popular folclórico latinoamericano'],
+  ['2026-10-11','Sumativa','Artes visuales','Mosaiquismo. Arte urbano'],
+  ['2026-10-14','Sumativa','Tecnología','El objeto tecnológico'],
+  ['2026-10-18','Sumativa','Ed. Física','Deportes individuales y colectivos aplicando reglas del juego'],
+  ['2026-10-20','Sumativa','Matemáticas','Razón y porcentaje'],
+  ['2026-10-22','Sumativa','Cs. Naturales','Lección 7'],
+  ['2026-10-26','Sumativa','Religión','Democracia y perseverancia'],
+  ['2026-10-26','Formativa','Lenguaje','Lectura domiciliaria 30%: “El gigante bonachón”'],
+  ['2026-10-27','Sumativa','Historia','Conformación del territorio chileno del siglo XIX'],
+  ['2026-10-28','Sin calificar','SIMCE','Matemáticas y cuestionario estudiantes'],
+  ['2026-10-29','Sin calificar','SIMCE','Lectura'],
+  ['2026-10-30','Formativa','Lenguaje','Lectura domiciliaria 70%: “El gigante bonachón”'],
+  ['2026-11-02','Sumativa','Lenguaje','Conectores, tipos de narradores y personajes'],
+  ['2026-11-06','Sumativa','Inglés','Unit 7: Animals and survival'],
+  ['2026-11-23','Sumativa','Religión','Honestidad'],
+  ['2026-11-25','Sumativa','Música','Unidad n°4 y repertorio'],
+  ['2026-11-26','Sumativa','Cs. Naturales','Erosión del suelo'],
+  ['2026-11-30','Sumativa','Lenguaje','Sinónimos, hipónimos e hiperónimos'],
+  ['2026-12-03','Formativa','Lenguaje','Lectura domiciliaria 30%: “El principito”'],
+  ['2026-12-04','Formativa','Lenguaje','Lectura domiciliaria 70%: “El principito”'],
+];
+function cargarDatosColegio(kidId) {
+  const k = D().kids.find(x => x.id === kidId); if (!k) return;
+  const yaCargado = (D().tasks || []).some(t => t.origen === 'cole2026');
+  const seguir = () => act(async () => {
+    closeSheet();
+    toast('Cargando horario y evaluaciones…');
+    const notas = (k.schedule ? k.schedule + '\n\n' : '') + COLE_PROFES;
+    await Store.update('kids', kidId, { ...k, timetable: COLE_HORARIO, schedule: notas });
+    const tareas = COLE_EVALS.map(([due, tipo, subject, contenido]) => ({
+      title: contenido, subject, kid: kidId, due, type: 'colegio',
+      note: `${tipo} · 6° básico`, done: false, origen: 'cole2026',
+    }));
+    await Store.bulkCreate('tasks', tareas);
+    render(); toast(`✓ Horario y ${tareas.length} evaluaciones cargadas`);
+  });
+  openSheet('Cargar datos del colegio', `
+    <p class="hint" style="margin-bottom:12px">Se cargará el <b>horario de materias</b> de 6° básico y <b>${COLE_EVALS.length} evaluaciones</b> (agosto–diciembre 2026) como tareas de ${esc(k.name)}, con recordatorio 1 día antes. También se guardan los correos de los profesores.</p>
+    ${yaCargado ? `<p class="hint" style="color:var(--rose);margin-bottom:12px">⚠️ Ya cargaste estos datos antes. Si continúas se duplicarán las evaluaciones.</p>` : ''}
+    <button class="btn block" id="cole-go">${yaCargado ? 'Cargar de nuevo' : 'Cargar ahora'}</button>`);
+  $('#cole-go').onclick = seguir;
 }
 function modalHijo(id) {
   const k = id ? D().kids.find(x => x.id === id) : {};
@@ -1399,5 +1492,5 @@ Object.assign(window, {
   verImagen, verImagenDoc, verReciboGasto, verImagenMensaje,
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
-  viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel,
+  viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel, cargarDatosColegio,
 });
