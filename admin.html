@@ -53,6 +53,13 @@
     <div id="tabla"><span class="mut">Ingresa tu clave y pulsa "Cargar familias".</span></div>
   </div>
 
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div style="font-weight:700">Pagos (para boletas)</div>
+      <button class="btn sm gray" onclick="cargarPagos()">Cargar pagos</button></div>
+    <div id="pagos"><span class="mut">Pulsa "Cargar pagos" para ver las ventas.</span></div>
+  </div>
+
   <div style="text-align:center;margin-top:6px">
     <span class="mut">Copaz Admin v21</span>
     <button class="btn sm gray" style="margin-left:8px" onclick="location.reload()">🔄 Actualizar panel</button>
@@ -87,6 +94,25 @@
         +'<button class="btn sm coral" onclick="activar(\''+f.id+'\',null,\'anual\')">+ Año</button></td></tr>';
     }
     h+='</table>'; $('#tabla').innerHTML=h;
+  }
+  async function cargarPagos(){
+    if(!key()){ alert('Ingresa la clave de administrador'); return; }
+    $('#pagos').innerHTML='<span class="mut">Cargando…</span>';
+    try{
+      const r=await fetch(base()+'/api/admin/payments',{headers:{'x-admin-key':key()}});
+      const b=await r.json();
+      if(!r.ok){ $('#pagos').innerHTML='<span class="mut">Error: '+(b.error||r.status)+'</span>'; return; }
+      const ps=b.payments||[];
+      if(!ps.length){ $('#pagos').innerHTML='<span class="mut">Sin pagos todavía.</span>'; return; }
+      let h='<table><tr><th>Fecha</th><th>Correo</th><th>Plan</th><th>Monto</th><th>Estado</th><th>Orden</th></tr>';
+      for(const p of ps){
+        h+='<tr><td>'+(p.fecha?new Date(p.fecha).toLocaleDateString('es-CL'):'—')+'</td><td>'+(p.emails||'—')+'</td><td>'+p.plan+'</td>'
+          +'<td>$'+Number(p.amount).toLocaleString('es-CL')+'</td>'
+          +'<td><span class="badge '+(p.status==='paid'?'b-premium':'b-prueba')+'">'+p.status+'</span></td>'
+          +'<td style="font-size:11px">'+p.order+'</td></tr>';
+      }
+      h+='</table>'; $('#pagos').innerHTML=h;
+    }catch(e){ $('#pagos').innerHTML='<span class="mut">Error de red: '+e.message+'</span>'; }
   }
   async function activar(familyId,email,plan){
     if(!key()){ alert('Ingresa la clave de administrador'); return; }

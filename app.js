@@ -1388,7 +1388,8 @@ function modalAjustes() {
     ${f.inviteCode ? `<div class="card tight" style="margin-bottom:14px"><div style="font-size:12px;color:var(--slate);text-transform:uppercase;letter-spacing:.05em">Código de invitación</div>
       <div style="font-size:24px;font-weight:800;letter-spacing:.12em;color:var(--teal-700)">${esc(f.inviteCode)}</div>
       <div class="hint">Compártelo con el otro padre para que se una.</div></div>` : ''}
-    <button class="btn block ghost" onclick="enablePush(true)" style="margin-bottom:10px">🔔 Activar notificaciones</button>
+    <button class="btn block ghost" onclick="enablePush(true)" style="margin-bottom:6px">🔔 Activar notificaciones</button>
+    <div class="hint" style="margin-bottom:10px">📱 En iPhone las notificaciones funcionan solo si agregas Copaz a la pantalla de inicio (Compartir → “Agregar a inicio”), con iOS 16.4 o superior.</div>
     <button class="btn block outline" onclick="cerrarSesion()" style="margin-bottom:10px">Cerrar sesión</button>` : '';
   openSheet('Ajustes', `
     <div class="field"><label>Tu nombre</label><input id="st-a" value="${esc(f.parents.A || '')}"></div>
@@ -1403,9 +1404,11 @@ function modalAjustes() {
     ${CLOUD ? `<button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
     <button class="btn block outline" onclick="modalActividad()" style="margin-top:10px">🕘 Actividad reciente</button>
     <button class="btn block outline" onclick="modalCalendario()" style="margin-top:10px">📆 Suscribir calendario</button>` : ''}
+    <button class="btn block outline" onclick="modalAyuda()" style="margin-top:10px">❓ Ayuda y soporte</button>
     ${inviteRow}
+    ${CLOUD ? `<button class="btn block danger" onclick="modalEliminarCuenta()" style="margin-top:10px">🗑️ Eliminar mi cuenta</button>` : ''}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
-    <p class="hint" style="text-align:center;margin-top:14px">Copaz v1 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
+    <p class="hint" style="text-align:center;margin-top:14px">Copaz v25 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
   if (!CLOUD) segBind('#st-me');
   $('#st-save').onclick = () => act(async () => {
     const parents = { A: $('#st-a').value.trim() || 'Yo', B: $('#st-b').value.trim() || 'Otro' };
@@ -1489,6 +1492,40 @@ function modalTarea(id) {
 }
 function delTarea(id) { act(async () => { await Store.remove('tasks', id); closeSheet(); render(); toast('Eliminada'); }); }
 
+const SOPORTE_EMAIL = 'servicio.oca.tec@gmail.com';
+function modalAyuda() {
+  const faqs = [
+    ['¿Cómo invito al otro padre/madre?', 'En Ajustes verás un “Código de invitación”. Compártelo; la otra persona crea su cuenta y en “Unirme a una familia” escribe ese código. Así ven y editan todo sincronizado.'],
+    ['¿Los dos vemos lo mismo al instante?', 'Sí. Gastos, mensajes, calendario, tareas y horario se sincronizan en tiempo real entre ambos.'],
+    ['¿Cómo cargo el horario y las evaluaciones del colegio?', 'Entra al perfil del hijo/a y toca “📥 Cargar datos del colegio”. También puedes editar el horario a mano o subir una foto del calendario.'],
+    ['¿Las notificaciones no me llegan en iPhone?', 'En iPhone debes agregar Copaz a la pantalla de inicio (Compartir → “Agregar a inicio”) y tener iOS 16.4 o superior.'],
+    ['¿Cómo funciona el pago?', 'Tienes 30 días gratis. Luego, desde “Planes y suscripción” pagas con Flow (mensual o anual). El Premium se activa solo al confirmarse el pago y te llega un recibo por correo.'],
+    ['¿Puedo cancelar o eliminar mis datos?', 'El cobro no es automático: si no renuevas, simplemente se vence. Puedes borrar toda tu cuenta y datos en Ajustes → “Eliminar mi cuenta”.'],
+    ['¿Es privado?', 'Solo tú y el otro padre/madre vinculado ven la información de su familia. Nadie más tiene acceso.'],
+  ];
+  openSheet('Ayuda y soporte ❓', `
+    ${faqs.map(([q, a]) => `<details style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px">
+      <summary style="font-weight:700;cursor:pointer">${esc(q)}</summary>
+      <div style="font-size:13.5px;color:var(--slate);margin-top:6px">${esc(a)}</div></details>`).join('')}
+    <div class="card tight" style="margin-top:8px"><div style="font-size:13px">¿Necesitas más ayuda? Escríbenos:</div>
+      <a class="btn block" href="mailto:${SOPORTE_EMAIL}?subject=Soporte%20Copaz" style="margin-top:8px">✉️ Contactar soporte</a>
+      <div class="hint" style="margin-top:6px">${SOPORTE_EMAIL}</div></div>
+    <p class="hint" style="text-align:center;margin-top:12px"><a href="terminos.html" target="_blank">Términos</a> · <a href="privacidad.html" target="_blank">Privacidad</a></p>`);
+}
+function modalEliminarCuenta() {
+  openSheet('Eliminar mi cuenta 🗑️', `
+    <p class="hint" style="margin-bottom:12px;color:var(--rose)">⚠️ Esto borra <b>para siempre</b> tu familia y todos sus datos (hijos, gastos, mensajes, tareas, documentos) para ambos padres. No se puede deshacer.</p>
+    <div class="field"><label>Escribe tu contraseña para confirmar</label><input id="del-pass" type="password"></div>
+    <div class="field"><label>Escribe ELIMINAR para continuar</label><input id="del-word" placeholder="ELIMINAR"></div>
+    <button class="btn block danger" id="del-go">Eliminar mi cuenta definitivamente</button>`);
+  $('#del-go').onclick = () => act(async () => {
+    if (($('#del-word').value || '').trim().toUpperCase() !== 'ELIMINAR') return toast('Escribe ELIMINAR para confirmar');
+    const pass = $('#del-pass').value; if (!pass) return toast('Escribe tu contraseña');
+    await Cloud.deleteAccount(pass);
+    Store.logout(); closeSheet(); location.hash = ''; render();
+    toast('Tu cuenta fue eliminada');
+  });
+}
 function cerrarSesion() { Store.logout(); closeSheet(); location.hash = ''; render(); }
 function modalCambiarClave() {
   openSheet('Cambiar contraseña', `
@@ -1639,5 +1676,5 @@ Object.assign(window, {
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
   viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel, cargarDatosColegio,
-  exportarTareasPDF, exportarColegioPDF, verImagenHijoDoc, modalAgenda,
+  exportarTareasPDF, exportarColegioPDF, verImagenHijoDoc, modalAgenda, modalAyuda, modalEliminarCuenta,
 });

@@ -190,6 +190,18 @@ try {
   r = await api('GET', '/api/state', null, tokenA);
   ok(r.body.tasks.length === 2, 'A ve ambas tareas');
 
+  // 20. Panel admin: lista de pagos
+  r = await api('GET', '/api/admin/payments', null, null, { 'x-admin-key': 'testadmin' });
+  ok(r.status === 200 && Array.isArray(r.body.payments), 'Admin lista pagos');
+
+  // 21. Eliminar cuenta (autoservicio) — va al final porque borra la familia
+  r = await api('DELETE', '/api/account', { password: 'incorrecta' }, tokenA);
+  ok(r.status === 401, 'Eliminar cuenta rechaza contraseña incorrecta');
+  r = await api('DELETE', '/api/account', { password: 'otraclave123' }, tokenA);
+  ok(r.status === 200 && r.body.ok, 'Elimina la cuenta con la contraseña correcta');
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(r.status !== 200, 'Tras eliminar, ya no hay acceso a la familia');
+
   console.log(`\n✅ ${pass} pruebas pasaron. Backend funciona de extremo a extremo.`);
 } catch (e) {
   console.error('\n❌ Falló una prueba:', e.message);

@@ -57,6 +57,7 @@ const Cloud = {
   resendVerify()                  { return this.req('POST', '/api/auth/resend-verify'); },
   changePassword(actual, nueva)   { return this.req('POST', '/api/auth/change-password', { actual, nueva }); },
   audit()                         { return this.req('GET', '/api/audit'); },
+  deleteAccount(password)         { return this.req('DELETE', '/api/account', { password }); },
 
   // --- Estado ---
   state()             { return this.req('GET', '/api/state'); },

@@ -5,7 +5,7 @@ import webpush from 'web-push';
 import { q, familyState } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 import { flowReady, flowPost } from './flow.js';
-import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion } from './mail.js';
+import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion, correoRecibo } from './mail.js';
 
 /* Groserías/insultos que se bloquean en los mensajes (también validado en el cliente). */
 function normGros(s) {
@@ -316,6 +316,19 @@ export function buildRouter(broadcast) {
     res.json({ families: out });
   });
 
+  // Lista de pagos (para llevar control y emitir boletas).
+  r.get('/admin/payments', async (req, res) => {
+    const key = req.headers['x-admin-key'];
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'No autorizado' });
+    const rows = (await q(`SELECT p."order", p.plan, p.amount, p.status, p.created_at, p.family_id FROM payments p ORDER BY p.created_at DESC LIMIT 500`)).rows;
+    const out = [];
+    for (const p of rows) {
+      const us = (await q(`SELECT email FROM users WHERE family_id=$1`, [p.family_id])).rows;
+      out.push({ order: p.order, plan: p.plan, amount: p.amount, status: p.status, fecha: p.created_at, emails: us.map(u => u.email).join(', ') });
+    }
+    res.json({ payments: out });
+  });
+
   // Crea el pago en Flow y devuelve la URL a la que redirigir al usuario.
   r.post('/pay/create', requireAuth, async (req, res) => {
     const plan = req.body.plan === 'anual' ? 'anual' : 'mensual';
@@ -356,7 +369,18 @@ export function buildRouter(broadcast) {
     const desde = (cur && cur.premium_until && new Date(cur.premium_until) > new Date()) ? new Date(cur.premium_until) : new Date();
     const until = new Date(desde.getTime() + dias * 86400000);
     await q(`UPDATE families SET premium_until=$1, premium_plan=$2 WHERE id=$3`, [until.toISOString(), plan, familyId]);
-    if (status.commerceOrder) await q(`UPDATE payments SET status='paid' WHERE "order"=$1`, [status.commerceOrder]).catch(() => {});
+    // Marca pagado y envía recibo por correo solo la primera vez (evita duplicados en reintentos del webhook).
+    let nuevoPago = true;
+    if (status.commerceOrder) {
+      const upd = await q(`UPDATE payments SET status='paid' WHERE "order"=$1 AND status<>'paid'`, [status.commerceOrder]).catch(() => ({ rowCount: 0 }));
+      nuevoPago = upd.rowCount > 0;
+    }
+    if (nuevoPago) {
+      const us = (await q(`SELECT email FROM users WHERE family_id=$1`, [familyId])).rows;
+      const p = PLANES[plan] || PLANES.mensual;
+      const hasta = until.toLocaleDateString('es-CL', { day: '2-digit', month: 'long', year: 'numeric' });
+      for (const u of us) enviarCorreo(u.email, 'Recibo de tu pago — Copaz Premium', correoRecibo({ plan: p.label || plan, monto: p.amount, hasta, orden: status.commerceOrder || '—' })).catch(() => {});
+    }
     broadcast(familyId, { type: 'sync' });
     return { pagado: true, familyId, plan, until };
   }
@@ -387,6 +411,22 @@ export function buildRouter(broadcast) {
       req.user.family_id,
     ]);
     broadcast(req.user.family_id, { type: 'sync' });
+    res.json({ ok: true });
+  });
+
+  // Eliminar cuenta y todos los datos de la familia (autoservicio, irreversible).
+  // Requiere la contraseña actual como confirmación.
+  r.delete('/account', requireAuth, async (req, res) => {
+    const pass = (req.body && req.body.password) || '';
+    const u = (await q(`SELECT password FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    if (!u || !(await compare(pass, u.password))) return res.status(401).json({ error: 'Contraseña incorrecta' });
+    const fam = req.user.family_id;
+    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs']) {
+      await q(`DELETE FROM ${t} WHERE family_id=$1`, [fam]).catch(() => {});
+    }
+    await q(`DELETE FROM users WHERE family_id=$1`, [fam]).catch(() => {});
+    await q(`DELETE FROM families WHERE id=$1`, [fam]).catch(() => {});
+    broadcast(fam, { type: 'deleted' });
     res.json({ ok: true });
   });
 

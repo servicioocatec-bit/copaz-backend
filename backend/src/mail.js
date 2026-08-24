@@ -37,3 +37,13 @@ export const correoVerificacion = (nombre, link) => wrap(`Confirma tu correo, ${
   `<p>¡Gracias por unirte a Copaz! Solo falta confirmar tu correo para activar tu cuenta y poder suscribirte.</p>
    <p style="text-align:center;margin:22px 0"><a href="${link}" style="background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Verificar mi correo</a></p>
    <p>Tienes <b>30 días de prueba gratis</b> de Premium. ¡Que lo disfrutes!</p>`);
+
+export const correoRecibo = ({ plan, monto, hasta, orden }) => wrap('Recibo de tu pago — Copaz Premium',
+  `<p>¡Gracias por tu pago! Tu suscripción <b>Premium ${plan}</b> quedó activa.</p>
+   <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px">
+     <tr><td style="padding:8px 0;color:#64748b">Plan</td><td style="padding:8px 0;text-align:right;font-weight:700">Premium ${plan}</td></tr>
+     <tr><td style="padding:8px 0;color:#64748b">Monto</td><td style="padding:8px 0;text-align:right;font-weight:700">$${Number(monto).toLocaleString('es-CL')} CLP</td></tr>
+     <tr><td style="padding:8px 0;color:#64748b">Válido hasta</td><td style="padding:8px 0;text-align:right;font-weight:700">${hasta}</td></tr>
+     <tr><td style="padding:8px 0;color:#64748b">N° de orden</td><td style="padding:8px 0;text-align:right">${orden}</td></tr>
+   </table>
+   <p style="color:#64748b;font-size:13px">El pago fue procesado por Flow. Si necesitas una boleta/factura, responde a este correo.</p>`);

@@ -250,4 +250,13 @@ a { color:var(--teal-700); }
   .fab { left:calc(var(--sidebar-w) + 16px); right:auto; bottom:24px; }
   .toast-root { bottom:24px; }
 }
+/* Escritorio: contenido centrado y cómodo, sin tanto espacio vacío. */
+@media (min-width:1100px) {
+  .screen { max-width:840px; padding-top:24px; }
+  .topbar-inner { max-width:840px; }
+  .fab { left:auto; right:calc((100vw - var(--sidebar-w) - 840px) / 2 + 8px); }
+}
+@media (min-width:1500px) {
+  .fab { right:calc((100vw - var(--sidebar-w) - 840px) / 2 + 8px); }
+}
 .hidden { display:none !important; }
