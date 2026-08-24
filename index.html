@@ -31,9 +31,31 @@
   <script src="api-client.js"></script>
   <script src="app.js" defer></script>
   <script>
+    /* Actualización automática: cuando se publica una versión nueva, la app
+       la instala en segundo plano y se recarga sola una sola vez. El usuario
+       siempre tiene la última versión sin limpiar caché ni reinstalar. */
     if ('serviceWorker' in navigator) {
+      const habiaControlador = !!navigator.serviceWorker.controller;
+      let recargando = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (recargando || !habiaControlador) return; // no recargar en la primera instalación
+        recargando = true;
+        location.reload();
+      });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(() => {});
+        navigator.serviceWorker.register('sw.js').then(reg => {
+          // Cuando hay una versión nueva esperando, actívala de inmediato.
+          const activarSiHay = () => { if (reg.waiting) reg.waiting.postMessage('skipWaiting'); };
+          reg.addEventListener('updatefound', () => {
+            const nw = reg.installing;
+            if (nw) nw.addEventListener('statechange', () => { if (nw.state === 'installed') activarSiHay(); });
+          });
+          activarSiHay();
+          // Buscar actualizaciones al volver a la app y de forma periódica.
+          const buscar = () => reg.update().catch(() => {});
+          document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') buscar(); });
+          setInterval(buscar, 30 * 60 * 1000);
+        }).catch(() => {});
       });
     }
   </script>

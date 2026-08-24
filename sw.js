@@ -1,5 +1,5 @@
-/* Copaz service worker — cache offline (solo recursos de la app). */
-const CACHE = 'copaz-v20';
+/* Copaz service worker — cache offline + actualización automática. */
+const CACHE = 'copaz-v21';
 
 self.addEventListener('push', (e) => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch { d = {}; }
@@ -27,16 +27,33 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
+// Permite que la página pida activar la nueva versión de inmediato.
+self.addEventListener('message', (e) => { if (e.data === 'skipWaiting') self.skipWaiting(); });
+
+// Estrategia "stale-while-revalidate": responde al instante desde el caché
+// y en segundo plano baja la versión nueva para la próxima carga. Así la app
+// se mantiene sola al día sin que el usuario tenga que limpiar nada.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  // No interceptar llamadas al backend (otro origen: API y WebSocket).
   const url = new URL(e.request.url);
-  if (url.origin !== location.origin) return;
-  e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).then(res => {
-      const copy = res.clone();
-      caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
+  if (url.origin !== location.origin) return; // no tocar el backend (API/WebSocket)
+  // El panel admin y las páginas informativas van siempre por la red primero
+  // (network-first) para no mostrar nunca una versión vieja.
+  const netFirst = /\/(admin|landing|terminos|privacidad)\.html$/.test(url.pathname);
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    if (netFirst) {
+      try {
+        const res = await fetch(e.request);
+        if (res && res.status === 200) cache.put(e.request, res.clone());
+        return res;
+      } catch { return (await cache.match(e.request)) || cache.match('./index.html'); }
+    }
+    const cached = await cache.match(e.request);
+    const network = fetch(e.request).then(res => {
+      if (res && res.status === 200) cache.put(e.request, res.clone());
       return res;
-    }).catch(() => caches.match('./index.html')))
-  );
+    }).catch(() => null);
+    return cached || (await network) || cache.match('./index.html');
+  })());
 });
