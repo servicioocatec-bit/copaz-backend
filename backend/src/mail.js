@@ -6,13 +6,15 @@ const EMAIL_FROM = (process.env.EMAIL_FROM || 'Copaz <onboarding@resend.dev>').t
 
 export const mailReady = () => !!RESEND_API_KEY;
 
-export async function enviarCorreo(to, subject, html) {
+export async function enviarCorreo(to, subject, html, attachments) {
   if (!RESEND_API_KEY) return false;
   try {
+    const body = { from: EMAIL_FROM, to, subject, html };
+    if (attachments && attachments.length) body.attachments = attachments; // [{ filename, content(base64) }]
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + RESEND_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ from: EMAIL_FROM, to, subject, html }),
+      body: JSON.stringify(body),
     });
     return r.ok;
   } catch { return false; }

@@ -194,6 +194,12 @@ try {
   r = await api('GET', '/api/admin/payments', null, null, { 'x-admin-key': 'testadmin' });
   ok(r.status === 200 && Array.isArray(r.body.payments), 'Admin lista pagos');
 
+  // 20b. Respaldo completo de la base
+  r = await api('GET', '/api/admin/backup', null, null, { 'x-admin-key': 'malo' });
+  ok(r.status === 401, 'Respaldo rechaza clave incorrecta');
+  r = await api('GET', '/api/admin/backup', null, null, { 'x-admin-key': 'testadmin' });
+  ok(r.status === 200 && r.body.tablas && Array.isArray(r.body.tablas.users), 'Descarga respaldo con todas las tablas');
+
   // 21. Eliminar cuenta (autoservicio) — va al final porque borra la familia
   r = await api('DELETE', '/api/account', { password: 'incorrecta' }, tokenA);
   ok(r.status === 401, 'Eliminar cuenta rechaza contraseña incorrecta');

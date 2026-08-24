@@ -130,6 +130,17 @@ export async function migrate() {
   await q(`CREATE INDEX IF NOT EXISTS idx_push_fam     ON push_subs(family_id);`);
 }
 
+/* Exporta TODAS las tablas (respaldo completo de la base). */
+export async function exportAll() {
+  const tablas = ['families', 'users', 'kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs'];
+  const data = { generado: new Date().toISOString(), version: 1, tablas: {} };
+  for (const t of tablas) {
+    try { data.tablas[t] = (await q(`SELECT * FROM ${t}`)).rows; }
+    catch { data.tablas[t] = []; }
+  }
+  return data;
+}
+
 /* Devuelve el estado completo de una familia (lo que consume el frontend). */
 export async function familyState(familyId) {
   const fam = (await q(`SELECT * FROM families WHERE id=$1`, [familyId])).rows[0];

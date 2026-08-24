@@ -6,7 +6,7 @@ import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { initPool, migrate } from './db.js';
 import { verify } from './auth.js';
-import { buildRouter, startReminders } from './routes.js';
+import { buildRouter, startReminders, startBackups } from './routes.js';
 
 /* ---- WebSocket: agrupamos conexiones por familia para difundir cambios ---- */
 const rooms = new Map(); // familyId -> Set<ws>
@@ -64,6 +64,7 @@ async function start() {
   const port = process.env.PORT || 3000;
   server.listen(port, () => console.log(`Copaz API escuchando en :${port}`));
   startReminders(); // recordatorios automáticos (eventos y cambios de custodia)
+  startBackups();   // respaldo diario de la base por correo (si BACKUP_EMAIL está configurado)
 }
 
 // Solo arranca si se ejecuta directamente (no al importar en pruebas).

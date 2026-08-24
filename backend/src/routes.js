@@ -2,7 +2,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import webpush from 'web-push';
-import { q, familyState } from './db.js';
+import { q, familyState, exportAll } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 import { flowReady, flowPost } from './flow.js';
 import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion, correoRecibo } from './mail.js';
@@ -116,6 +116,31 @@ export function startReminders() {
   };
   setTimeout(run, 15000);        // primera pasada al arrancar
   setInterval(run, 30 * 60000);  // cada 30 minutos
+}
+
+/* Respaldo automático: una vez al día exporta toda la base y la envía por correo
+   a BACKUP_EMAIL (adjunto JSON). Requiere RESEND_API_KEY y BACKUP_EMAIL. */
+let ultimoRespaldo = null;
+export function startBackups() {
+  const destino = (process.env.BACKUP_EMAIL || '').trim();
+  const run = async () => {
+    try {
+      if (!destino) return; // sin destino configurado, se omite (queda la descarga manual en el admin)
+      const hoy = new Date().toISOString().slice(0, 10);
+      const horaOk = new Date().getHours() >= 4; // corre después de las 4am del servidor
+      if (ultimoRespaldo === hoy || !horaOk) return;
+      const data = await exportAll();
+      const json = JSON.stringify(data);
+      const b64 = Buffer.from(json, 'utf8').toString('base64');
+      const fams = (data.tablas.families || []).length, users = (data.tablas.users || []).length;
+      const ok = await enviarCorreo(destino, `Respaldo Copaz — ${hoy}`,
+        `<p>Respaldo automático de la base de datos de Copaz.</p><p><b>${fams}</b> familias · <b>${users}</b> usuarios.</p><p>Adjunto: copaz-respaldo-${hoy}.json. Guárdalo en un lugar seguro.</p>`,
+        [{ filename: `copaz-respaldo-${hoy}.json`, content: b64 }]);
+      if (ok) ultimoRespaldo = hoy;
+    } catch (e) { /* silencioso */ }
+  };
+  setTimeout(run, 30000);            // primer intento poco después de arrancar
+  setInterval(run, 60 * 60 * 1000);  // revisa cada hora si toca el respaldo del día
 }
 
 async function logAudit(familyId, actor, action, detail) {
@@ -314,6 +339,17 @@ export function buildRouter(broadcast) {
         trialUntil: f.trial_until, premiumUntil: f.premium_until, plan: f.premium_plan, estado });
     }
     res.json({ families: out });
+  });
+
+  // Descargar un respaldo completo de la base (JSON). Protegido con ADMIN_KEY.
+  r.get('/admin/backup', async (req, res) => {
+    const key = req.headers['x-admin-key'] || (req.query && req.query.key);
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'No autorizado' });
+    const data = await exportAll();
+    const fecha = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="copaz-respaldo-${fecha}.json"`);
+    res.send(JSON.stringify(data));
   });
 
   // Lista de pagos (para llevar control y emitir boletas).

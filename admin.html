@@ -60,8 +60,15 @@
     <div id="pagos"><span class="mut">Pulsa "Cargar pagos" para ver las ventas.</span></div>
   </div>
 
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">Respaldo de la base</div>
+    <div class="mut" style="margin-bottom:8px">Descarga una copia completa (JSON) de todos los datos. Guárdala en un lugar seguro.</div>
+    <button class="btn gray" onclick="descargarRespaldo()">⬇️ Descargar respaldo</button>
+    <div class="mut" style="margin-top:8px">El respaldo también se envía solo por correo cada día si configuras <b>BACKUP_EMAIL</b> en el servidor.</div>
+  </div>
+
   <div style="text-align:center;margin-top:6px">
-    <span class="mut">Copaz Admin v21</span>
+    <span class="mut">Copaz Admin v25</span>
     <button class="btn sm gray" style="margin-left:8px" onclick="location.reload()">🔄 Actualizar panel</button>
   </div>
 </div>
@@ -94,6 +101,17 @@
         +'<button class="btn sm coral" onclick="activar(\''+f.id+'\',null,\'anual\')">+ Año</button></td></tr>';
     }
     h+='</table>'; $('#tabla').innerHTML=h;
+  }
+  async function descargarRespaldo(){
+    if(!key()){ alert('Ingresa la clave de administrador'); return; }
+    try{
+      const r=await fetch(base()+'/api/admin/backup',{headers:{'x-admin-key':key()}});
+      if(!r.ok){ const b=await r.json().catch(()=>({})); alert('Error: '+(b.error||r.status)); return; }
+      const blob=await r.blob();
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+      a.download='copaz-respaldo-'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+      URL.revokeObjectURL(a.href);
+    }catch(e){ alert('Error de red: '+e.message); }
   }
   async function cargarPagos(){
     if(!key()){ alert('Ingresa la clave de administrador'); return; }
