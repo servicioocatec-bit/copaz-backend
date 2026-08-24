@@ -58,6 +58,7 @@ export async function migrate() {
   await entity('swaps',    `data JSONB NOT NULL`);   // solicitudes de intercambio de días
   await entity('journal',  `data JSONB NOT NULL`);   // bitácora / diario de los hijos
   await entity('settlements', `data JSONB NOT NULL`);// reembolsos / abonos entre padres
+  await entity('tasks',    `data JSONB NOT NULL`);   // tareas del colegio / quehaceres del hogar
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS cal_token TEXT;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS last_custody_reminder TEXT;`);
   await q(`
@@ -161,6 +162,7 @@ export async function familyState(familyId) {
     swaps:    await load('swaps'),
     journal:  await load('journal'),
     settlements: await load('settlements'),
+    tasks:    await load('tasks'),
     messages,
   };
 }

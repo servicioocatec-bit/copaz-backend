@@ -8,7 +8,13 @@ import { flowReady, flowPost } from './flow.js';
 import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion } from './mail.js';
 
 /* Groserías/insultos que se bloquean en los mensajes (también validado en el cliente). */
-const GROSERIAS = /\b(cs?m|ctm|conch[ae]?(?:tumadre| de tu madre|etumare)?|culi[aá]?[oa]s?|maric[oó]n(?:es)?|maraco|hij[oa] de (?:puta|perra)|hdp|hijueputa|malpar[ií]d[oa]|mierda|put[ao]s?|put[ao]n|zorra|imb[eé]cil(?:es)?|idiota|est[uú]pid[oa]s?|tarad[oa]s?|in[uú]til(?:es)?|pendej[oa]s?|boludo|pelotudo|cabr[oó]n|verga|garca|forro|gonorrea|malnacid[oa]|infeliz|cretin[oa]|subnormal|retrasad[oa]|desgraciad[oa]|anda a la (?:mierda|conch)|vete a la mierda|chucha (?:tu|de)|reculiad[oa])\b/i;
+function normGros(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't').replace(/@/g, 'a').replace(/\$/g, 's')
+    .replace(/(.)\1{2,}/g, '$1');
+}
+const GROSERIAS = /\b(cs?m|ctm|ql[oa]?|qli?a[oa]|conch[ae]?(tumare|tumadre|desumadre|etumare)?|conchetumare|culi?a?[oa]s?|culea?[oa]s?|maricon(es)?|marica|maraco|hij[oa] de (put[ao]|perr[ao]|mil putas)|hdp|hijuep[au]t[ao]|malpari[dt][oa]|mierda|mrd|put[ao]s?|puton|putea(n|r|s)?|zorra|imbecil(es)?|idiota|estupid[oa]s?|tarad[oa]s?|inutil(es)?|pendej[oa]s?|boludo|pelotud[oa]|cabron(es)?|verga|vrga|care?verga|chinga(d[oa]|r|s|n|mos)?|chingue|coño|cono|carajo|joder|jodete|jodid[oa]|cojones|gilipollas|capullo|mam[oa]n(es)?|mamada|mamah?uevo|mames|polla|soplapollas|garca|forro|gonorrea|malnacid[oa]|cretin[oa]|subnormal|retrasad[oa]|mongolic[oa]|desgraciad[oa]|anda a la (mierda|conch|verga|chingada)|vete a la (mierda|verga|chingada|conch)|andate a la (mierda|conch|verga)|chucha (tu|de|madre)|reculi?a[dt][oa]|fuck|shit|bitch|asshole|bastard)\b/i;
+const esOfensivo = (t) => GROSERIAS.test(normGros(t));
 
 /* Planes Premium (por cada padre). Días de vigencia que otorga cada pago. */
 const PLANES = {
@@ -90,6 +96,14 @@ export function startReminders() {
           if (e.date === hoy || e.date === manana) {
             sendPush(f.id, null, { title: 'Recordatorio', body: `${e.title || 'Evento'}${e.time ? ' · ' + e.time : ''} (${e.date === hoy ? 'hoy' : 'mañana'})`, url: './#/calendario', tag: 'recordatorio' }).catch(() => {});
             await q(`UPDATE events SET data=$1 WHERE id=$2`, [JSON.stringify({ ...e, reminded: true }), row.id]);
+          }
+        }
+        const tks = (await q(`SELECT id, data FROM tasks WHERE family_id=$1`, [f.id])).rows;
+        for (const row of tks) {
+          const tk = row.data; if (!tk || tk.reminded || tk.done || !tk.due) continue;
+          if (tk.due === hoy || tk.due === manana) {
+            sendPush(f.id, null, { title: 'Tarea por entregar', body: `${tk.title || 'Tarea'}${tk.subject ? ' · ' + tk.subject : ''} (${tk.due === hoy ? 'hoy' : 'mañana'})`, url: './#/tareas', tag: 'tarea' }).catch(() => {});
+            await q(`UPDATE tasks SET data=$1 WHERE id=$2`, [JSON.stringify({ ...tk, reminded: true }), row.id]);
           }
         }
         if (custodioCalc(f.schedule, hoy) !== custodioCalc(f.schedule, manana) && f.last_custody_reminder !== hoy) {
@@ -383,7 +397,7 @@ export function buildRouter(broadcast) {
     const text = String(req.body.text || '').trim();
     const image = req.body.image && /^data:image\//.test(req.body.image) ? req.body.image : null;
     if (!text && !image) return res.status(400).json({ error: 'Mensaje vacío' });
-    if (text && GROSERIAS.test(text)) return res.status(400).json({ error: 'El mensaje contiene lenguaje ofensivo. Reformúlalo, por favor.', ofensivo: true });
+    if (text && esOfensivo(text)) return res.status(400).json({ error: 'El mensaje contiene lenguaje ofensivo. Reformúlalo, por favor.', ofensivo: true });
     const id = uid(); const ts = Date.now();
     await q(`INSERT INTO messages (id, family_id, sender, role, text, image, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [id, req.user.family_id, req.user.uid, req.user.role, text, image, ts]);
@@ -395,7 +409,7 @@ export function buildRouter(broadcast) {
   });
 
   /* --------------------- CRUD genérico por entidad ------------------ */
-  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements'];
+  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks'];
   const guard = (t, res) => { if (!ENTITIES.includes(t)) { res.status(404).json({ error: 'Entidad no válida' }); return false; } return true; };
 
   // Crear
@@ -417,6 +431,10 @@ export function buildRouter(broadcast) {
     } else if (t === 'settlements') {
       nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
         title: 'Reembolso registrado', body: `${n} registró un abono`, url: './#/gastos', tag: 'abono',
+      })).catch(() => {});
+    } else if (t === 'tasks') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Nueva tarea', body: `${n} agregó: ${(data.title || '').slice(0, 60)}`, url: './#/tareas', tag: 'tarea',
       })).catch(() => {});
     }
     logAudit(req.user.family_id, req.user.role, 'crear', `${t}: ${data.title || data.name || data.text || ''}`);

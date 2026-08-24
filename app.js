@@ -139,7 +139,7 @@ const Store = {
         schedule: { type: scheduleType, start: iso(new Date(d.getFullYear(), d.getMonth(), 1)), startParent: 'A' },
         parents: { A: a, B: b },
       },
-      kids, events: [], expenses: [], docs: [], swaps: [], journal: [], messages: [],
+      kids, events: [], expenses: [], docs: [], swaps: [], journal: [], tasks: [], messages: [],
     };
     if (demo) seedDemo(this.state);
     this._save();
@@ -223,7 +223,7 @@ function balance() {
 function etiquetaEsquema(t) { return { 'semanal':'Semanal','2-2-3':'2-2-3','2-2-5-5':'2-2-5-5','3-4-4-3':'3-4-4-3','alterna':'Día por medio' }[t] || t; }
 
 /* ================================ ROUTER =============================== */
-const ROUTES = ['inicio','calendario','gastos','mensajes','hijos'];
+const ROUTES = ['inicio','calendario','gastos','mensajes','hijos','tareas'];
 const currentRoute = () => { const h = location.hash.replace('#/', '').split('/')[0]; return ROUTES.includes(h) ? h : 'inicio'; };
 const go = (r) => { location.hash = '#/' + r; };
 window.addEventListener('hashchange', render);
@@ -255,7 +255,7 @@ function render() {
   renderNav();
   const r = currentRoute();
   const app = $('#app'); app.innerHTML = '';
-  ({ inicio: viewInicio, calendario: viewCalendario, gastos: viewGastos, mensajes: viewMensajes, hijos: viewHijos }[r])(app);
+  ({ inicio: viewInicio, calendario: viewCalendario, gastos: viewGastos, mensajes: viewMensajes, hijos: viewHijos, tareas: viewTareas }[r])(app);
 }
 function renderLoading() { $('#app').innerHTML = `<div class="ob"><div class="empty"><div class="ic">🕊️</div><p>Cargando tu espacio…</p></div></div>`; }
 function renderPaywall() {
@@ -273,10 +273,13 @@ function renderNav() {
   const r = currentRoute();
   const lastSeen = +(localStorage.getItem('copaz.msgSeen') || 0);
   const unread = (D().messages || []).filter(m => m.from !== meRole() && m.ts > lastSeen).length;
-  const items = [['inicio','🏠','Inicio'],['calendario','📅','Calendario'],['gastos','💰','Gastos'],['mensajes','💬','Mensajes'],['hijos','🧒','Hijos']];
+  const hoyISO = iso(new Date());
+  const tareasPend = (D().tasks || []).filter(t => !t.done && t.due && t.due <= hoyISO).length;
+  const items = [['inicio','🏠','Inicio'],['calendario','📅','Custodia'],['gastos','💰','Gastos'],['mensajes','💬','Chat'],['tareas','📝','Tareas'],['hijos','🧒','Hijos']];
   $('#nav').innerHTML = items.map(([id, ic, l]) => {
-    const dot = (id === 'mensajes' && unread > 0)
-      ? `<span style="position:absolute;top:3px;left:calc(50% + 6px);min-width:16px;height:16px;padding:0 4px;background:var(--rose);color:#fff;font-size:10px;font-weight:700;border-radius:99px;display:grid;place-items:center">${unread}</span>` : '';
+    const n = id === 'mensajes' ? unread : (id === 'tareas' ? tareasPend : 0);
+    const dot = (n > 0)
+      ? `<span style="position:absolute;top:3px;left:calc(50% + 6px);min-width:16px;height:16px;padding:0 4px;background:var(--rose);color:#fff;font-size:10px;font-weight:700;border-radius:99px;display:grid;place-items:center">${n}</span>` : '';
     return `<a href="#/${id}" class="${r===id?'active':''}" style="position:relative"><span class="ic">${ic}</span>${l}${dot}</a>`;
   }).join('');
 }
@@ -940,9 +943,16 @@ function suavizarMensaje() {
   input.focus();
   toast('Sugerencia lista — revísala antes de enviar');
 }
-/* Lista de groserías/insultos que se BLOQUEAN al enviar. */
-const GROSERIAS = /\b(cs?m|ctm|conch[ae]?(?:tumadre| de tu madre|etumare)?|culi[aá]?[oa]s?|maric[oó]n(?:es)?|maraco|weon culi|hij[oa] de (?:puta|perra)|hdp|hijueputa|malpar[ií]d[oa]|mierda|put[ao]s?|put[ao]n|zorra|perr[ao] (?:asquerosa|inmunda)|imb[eé]cil(?:es)?|idiota|est[uú]pid[oa]s?|tarad[oa]s?|in[uú]til(?:es)?|pendej[oa]s?|boludo|pelotudo|cabr[oó]n|verga|garca|forro|gonorrea|malnacid[oa]|infeliz|cretin[oa]|subnormal|retrasad[oa]|desgraciad[oa]|anda a la (?:mierda|conch)|vete a la mierda|chucha (?:tu|de)|reculiad[oa])\b/i;
-function tieneGroseria(text) { return GROSERIAS.test(String(text || '')); }
+/* Normaliza el texto para detectar groserías aunque usen acentos, MAYÚSCULAS,
+   letras repetidas (putooo) o números/símbolos (v3rg@). */
+function normGros(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '')
+    .replace(/0/g, 'o').replace(/1/g, 'i').replace(/3/g, 'e').replace(/4/g, 'a').replace(/5/g, 's').replace(/7/g, 't').replace(/@/g, 'a').replace(/\$/g, 's')
+    .replace(/(.)\1{2,}/g, '$1');
+}
+/* Lista de groserías/insultos que se BLOQUEAN al enviar (Latinoamérica + México + Chile + España). */
+const GROSERIAS = /\b(cs?m|ctm|ql[oa]?|qli?a[oa]|conch[ae]?(tumare|tumadre|desumadre|etumare)?|conchetumare|culi?a?[oa]s?|culea?[oa]s?|maricon(es)?|marica|maraco|hij[oa] de (put[ao]|perr[ao]|mil putas)|hdp|hijuep[au]t[ao]|malpari[dt][oa]|mierda|mrd|put[ao]s?|puton|putea(n|r|s)?|zorra|imbecil(es)?|idiota|estupid[oa]s?|tarad[oa]s?|inutil(es)?|pendej[oa]s?|boludo|pelotud[oa]|cabron(es)?|verga|vrga|care?verga|chinga(d[oa]|r|s|n|mos)?|chingue|coño|cono|carajo|joder|jodete|jodid[oa]|cojones|gilipollas|capullo|mam[oa]n(es)?|mamada|mamah?uevo|mames|polla|soplapollas|garca|forro|gonorrea|malnacid[oa]|cretin[oa]|subnormal|retrasad[oa]|mongolic[oa]|desgraciad[oa]|anda a la (mierda|conch|verga|chingada)|vete a la (mierda|verga|chingada|conch)|andate a la (mierda|conch|verga)|chucha (tu|de|madre)|reculi?a[dt][oa]|fuck|shit|bitch|asshole|bastard)\b/i;
+function tieneGroseria(text) { return GROSERIAS.test(normGros(text)); }
 
 function enviarMensaje() {
   const input = $('#msg-in'), text = input.value.trim(); if (!text) return;
@@ -994,8 +1004,65 @@ function modalHijoVer(id) {
     <div class="kid-card" style="margin-bottom:6px"><div class="ph" style="background:${k.photo ? `center/cover no-repeat url('${k.photo}')` : (k.color||'#0d9488')};width:64px;height:64px;font-size:28px">${k.photo ? '' : inicial(k.name)}</div>
       <div><div style="font-weight:800;font-size:20px">${esc(k.name)}</div>
         <div style="color:var(--slate)">${k.dob ? calcEdad(k.dob)+' años · '+k.dob : 'Sin fecha de nacimiento'}</div></div></div>
-    <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Horario escolar</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
-    <div class="row2" style="margin-top:18px"><button class="btn ghost" onclick="modalHijo('${k.id}')">Editar</button><button class="btn outline" onclick="delHijo('${k.id}')">Eliminar</button></div>`);
+    <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Notas de horario</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
+    <div style="margin-top:14px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">📚 Horario de materias</div>${horarioGrid(k.timetable)}
+      <button class="btn block outline" style="margin-top:8px" onclick="modalHorario('${k.id}')">Editar horario de materias</button></div>
+    <div class="row2" style="margin-top:18px"><button class="btn ghost" onclick="modalHijo('${k.id}')">Editar datos</button><button class="btn outline" onclick="delHijo('${k.id}')">Eliminar</button></div>`);
+}
+/* ---- Horario de materias (grilla semanal por hijo) ---- */
+const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'];
+function subColor(s = '') { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 60% 87%)`; }
+function horarioGrid(tt) {
+  tt = (tt || []).filter(p => p && p.start);
+  if (!tt.length) return `<div class="empty" style="padding:16px 0"><div class="ic">📚</div><p>Sin horario de materias todavía</p></div>`;
+  const horas = [...new Set(tt.map(p => p.start))].sort();
+  const th = 'padding:6px 4px;font-size:11px;color:var(--slate);text-align:center;font-weight:700';
+  const td = 'padding:3px;text-align:center;vertical-align:top';
+  let h = `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:340px"><thead><tr><th style="${th}"></th>${DIAS.map(d => `<th style="${th}">${d}</th>`).join('')}</tr></thead><tbody>`;
+  for (const hr of horas) {
+    h += `<tr><td style="${td};font-size:11px;color:var(--slate);white-space:nowrap">${esc(hr)}</td>`;
+    for (const d of DIAS) {
+      const p = tt.find(x => x.start === hr && x.day === d);
+      h += `<td style="${td}">${p ? `<div style="background:${subColor(p.subject)};color:#0f172a;border-radius:8px;padding:5px 4px;font-size:11px;font-weight:600;line-height:1.15">${esc(p.subject)}${p.room ? `<div style="font-weight:400;opacity:.7">${esc(p.room)}</div>` : ''}</div>` : ''}</td>`;
+    }
+    h += `</tr>`;
+  }
+  return h + `</tbody></table></div>`;
+}
+function modalHorario(id) {
+  const k = D().kids.find(x => x.id === id); if (!k) return;
+  openSheet(`Horario · ${k.name}`, `
+    ${horarioGrid(k.timetable)}
+    <div id="tt-list" style="margin-top:12px"></div>
+    <button class="btn block outline" onclick="ttAdd('${id}')" style="margin-top:10px">➕ Agregar bloque</button>`);
+  renderTtList(id);
+}
+function renderTtList(id) {
+  const el = $('#tt-list'); if (!el) return;
+  const k = D().kids.find(x => x.id === id);
+  const orden = d => DIAS.indexOf(d);
+  const tt = (k.timetable || []).map((p, i) => ({ ...p, _i: i })).sort((a, b) => (orden(a.day) - orden(b.day)) || String(a.start).localeCompare(b.start));
+  el.innerHTML = tt.map(p => `<div class="list-row"><div class="avatar" style="background:${subColor(p.subject)};color:#0f172a">${esc(String(p.subject || '?')[0].toUpperCase())}</div>
+    <div class="body"><div class="t">${esc(p.subject)}</div><div class="s">${esc(p.day)} · ${esc(p.start)}${p.end ? '–' + esc(p.end) : ''}${p.room ? ' · ' + esc(p.room) : ''}</div></div>
+    <button class="btn ghost" style="padding:6px 10px" onclick="ttDel('${id}',${p._i})">✕</button></div>`).join('');
+}
+function ttAdd(id) {
+  openSheet('Agregar bloque', `
+    <div class="field"><label>Materia</label><input id="tt-s" placeholder="Matemáticas"></div>
+    <div class="row2"><div class="field"><label>Día</label><select id="tt-d">${DIAS.map(d => `<option>${d}</option>`).join('')}</select></div>
+      <div class="field"><label>Sala (opcional)</label><input id="tt-r" placeholder="Aula 3"></div></div>
+    <div class="row2"><div class="field"><label>Hora inicio</label><input id="tt-h" type="time" value="08:00"></div>
+      <div class="field"><label>Hora fin</label><input id="tt-e" type="time"></div></div>
+    <button class="btn block" id="tt-go">Agregar</button>`);
+  $('#tt-go').onclick = () => act(async () => {
+    const s = $('#tt-s').value.trim(); if (!s) return toast('Escribe la materia');
+    const k = D().kids.find(x => x.id === id);
+    const tt = (k.timetable || []).concat([{ subject: s, day: $('#tt-d').value, start: $('#tt-h').value, end: $('#tt-e').value, room: $('#tt-r').value.trim() }]);
+    await Store.update('kids', id, { ...k, timetable: tt }); modalHorario(id); toast('Bloque agregado ✓');
+  });
+}
+function ttDel(id, i) {
+  act(async () => { const k = D().kids.find(x => x.id === id); const tt = (k.timetable || []).slice(); tt.splice(i, 1); await Store.update('kids', id, { ...k, timetable: tt }); modalHorario(id); });
 }
 function modalHijo(id) {
   const k = id ? D().kids.find(x => x.id === id) : {};
@@ -1009,7 +1076,8 @@ function modalHijo(id) {
     <div class="field"><label>Medicamentos</label><input id="k-meds" value="${esc(k.meds||'')}"></div>
     <div class="field"><label>Médico / pediatra</label><input id="k-doc" value="${esc(k.doctor||'')}"></div>
     <div class="field"><label>Contacto de emergencia</label><input id="k-em" value="${esc(k.emergency||'')}" placeholder="Nombre y teléfono"></div>
-    <div class="field"><label>Horario escolar</label><textarea id="k-sched" style="min-height:110px" placeholder="Ej.\nLun a Vie: 8:00–14:00\nMartes: natación 16:00\nViernes: salida 12:30">${esc(k.schedule||'')}</textarea></div>
+    <div class="field"><label>Notas de horario (opcional)</label><textarea id="k-sched" style="min-height:80px" placeholder="Ej.\nEntrada 8:00 · Salida 14:00\nMartes: natación 16:00">${esc(k.schedule||'')}</textarea>
+      ${id ? `<button type="button" class="btn block outline" style="margin-top:8px" onclick="modalHorario('${id}')">📚 Horario de materias (grilla)</button>` : `<div class="hint" style="margin-top:6px">Guarda primero para agregar el horario de materias en grilla.</div>`}</div>
     <div class="field"><label>Foto (opcional)</label><input id="k-img" type="file" accept="image/*">
       <div id="k-prev" style="margin-top:8px">${k.photo ? `<img src="${k.photo}" style="width:72px;height:72px;object-fit:cover;border-radius:18px">` : ''}</div></div>
     <div class="field"><label>Notas</label><textarea id="k-notes">${esc(k.notes||'')}</textarea></div>
@@ -1128,6 +1196,60 @@ function modalAjustes() {
   const rst = $('#st-reset');
   if (rst) rst.onclick = () => { if (confirm('¿Borrar todos los datos? No se puede deshacer.')) { Store.wipeLocal(); closeSheet(); go('inicio'); render(); } };
 }
+/* =============================== TAREAS =============================== */
+function viewTareas(app) {
+  const hoyISO = iso(new Date());
+  const all = [...(D().tasks || [])];
+  const filtro = window.tareaFiltro || 'pend';
+  let list = all;
+  if (filtro === 'pend') list = all.filter(t => !t.done);
+  else if (filtro === 'colegio') list = all.filter(t => t.type !== 'hogar');
+  else if (filtro === 'hogar') list = all.filter(t => t.type === 'hogar');
+  list.sort((a, b) => (a.done !== b.done ? (a.done ? 1 : -1) : String(a.due || '9999').localeCompare(String(b.due || '9999'))));
+  const chip = (id, l) => `<button class="btn sm ${filtro === id ? '' : 'ghost'}" style="padding:6px 12px" onclick="window.tareaFiltro='${id}';viewTareas(document.getElementById('app'))">${l}</button>`;
+  const pend = all.filter(t => !t.done).length;
+  const atras = all.filter(t => !t.done && t.due && t.due < hoyISO).length;
+  app.innerHTML = topbar('Tareas', pend ? `${pend} pendiente${pend > 1 ? 's' : ''}${atras ? ` · ${atras} atrasada${atras > 1 ? 's' : ''}` : ''}` : 'Todo al día') + `<div class="screen">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${chip('pend', 'Pendientes')}${chip('colegio', '📚 Colegio')}${chip('hogar', '🏠 Hogar')}${chip('todas', 'Todas')}</div>
+    <div class="card">${list.length ? list.map(taskRow).join('') : `<div class="empty"><div class="ic">📝</div><p>${all.length ? 'Nada por aquí' : 'Aún no hay tareas'}</p></div>`}</div>
+    </div><button class="fab" onclick="modalTarea()">＋</button>`;
+}
+function taskRow(t) {
+  const kid = D().kids.find(k => k.id === t.kid);
+  const hoyISO = iso(new Date());
+  const late = t.due && t.due < hoyISO && !t.done;
+  const vence = t.due ? (late ? 'Atrasada' : (t.due === hoyISO ? 'Vence hoy' : 'Entrega ' + fechaLarga(t.due))) : 'Sin fecha';
+  const ic = t.type === 'hogar' ? '🏠' : '📚';
+  return `<div class="list-row">
+    <button onclick="toggleTarea('${t.id}')" style="width:26px;height:26px;border-radius:8px;border:2px solid ${t.done ? 'var(--teal-500)' : 'var(--line)'};background:${t.done ? 'var(--teal-500)' : 'transparent'};color:#fff;flex:none;cursor:pointer;font-size:14px">${t.done ? '✓' : ''}</button>
+    <div class="body" style="cursor:pointer;margin-left:10px" onclick="modalTarea('${t.id}')"><div class="t" style="${t.done ? 'text-decoration:line-through;opacity:.55' : ''}">${ic} ${esc(t.title)}</div>
+      <div class="s">${t.subject ? esc(t.subject) + ' · ' : ''}${kid ? esc(kid.name) + ' · ' : ''}<span style="${late ? 'color:var(--rose);font-weight:700' : ''}">${vence}</span></div></div></div>`;
+}
+function toggleTarea(id) { act(async () => { const t = (D().tasks || []).find(x => x.id === id); if (!t) return; await Store.update('tasks', id, { ...t, done: !t.done }); render(); }); }
+function modalTarea(id) {
+  const t = id ? (D().tasks || []).find(x => x.id === id) : null;
+  const kidsOpts = `<option value="">— General —</option>` + D().kids.map(k => `<option value="${k.id}"${t && t.kid === k.id ? ' selected' : ''}>${esc(k.name)}</option>`).join('');
+  const tipo = t ? (t.type || 'colegio') : 'colegio';
+  openSheet(id ? 'Editar tarea' : 'Nueva tarea', `
+    <div class="field"><label>Título</label><input id="tk-t" placeholder="Ej. Entregar maqueta, tender la cama…" value="${t ? esc(t.title) : ''}"></div>
+    <div class="field"><label>Tipo</label><div class="seg" id="tk-tipo">${['colegio', 'hogar'].map(x => `<button type="button" data-v="${x}" class="${tipo === x ? 'on' : ''}">${x === 'colegio' ? '📚 Colegio' : '🏠 Hogar'}</button>`).join('')}</div></div>
+    <div class="row2"><div class="field"><label>Materia (opcional)</label><input id="tk-s" value="${t ? esc(t.subject || '') : ''}" placeholder="Matemáticas"></div>
+      <div class="field"><label>Hijo/a</label><select id="tk-k">${kidsOpts}</select></div></div>
+    <div class="field"><label>Fecha de entrega</label><input id="tk-d" type="date" value="${t ? t.due || '' : ''}"></div>
+    <div class="field"><label>Notas (opcional)</label><textarea id="tk-n">${t ? esc(t.note || '') : ''}</textarea></div>
+    <button class="btn block" id="tk-go">${id ? 'Guardar' : 'Agregar'}</button>
+    ${id ? `<button class="btn block outline" style="margin-top:8px" onclick="delTarea('${id}')">Eliminar</button>` : ''}`);
+  $$('#tk-tipo button').forEach(b => b.onclick = () => $$('#tk-tipo button').forEach(x => x.classList.toggle('on', x === b)));
+  $('#tk-go').onclick = () => act(async () => {
+    const title = $('#tk-t').value.trim(); if (!title) return toast('Escribe el título');
+    const obj = { title, type: segVal('#tk-tipo'), subject: $('#tk-s').value.trim(), kid: $('#tk-k').value, due: $('#tk-d').value, note: $('#tk-n').value.trim(), done: t ? !!t.done : false };
+    if (id) await Store.update('tasks', id, { ...t, ...obj, reminded: (t && t.due === obj.due) ? t.reminded : false });
+    else await Store.create('tasks', obj);
+    closeSheet(); render(); toast('Guardado');
+  });
+}
+function delTarea(id) { act(async () => { await Store.remove('tasks', id); closeSheet(); render(); toast('Eliminada'); }); }
+
 function cerrarSesion() { Store.logout(); closeSheet(); location.hash = ''; render(); }
 function modalCambiarClave() {
   openSheet('Cambiar contraseña', `
@@ -1277,4 +1399,5 @@ Object.assign(window, {
   verImagen, verImagenDoc, verReciboGasto, verImagenMensaje,
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
+  viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel,
 });

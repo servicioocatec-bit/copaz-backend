@@ -150,8 +150,14 @@ try {
   // 17. Bloqueo de groserías en mensajes
   r = await api('POST', '/api/messages', { text: 'eres un idiota' }, tokenB);
   ok(r.status === 400 && r.body.ofensivo, 'Bloquea mensaje con lenguaje ofensivo');
+  for (const frase of ['chinga tu madre', 'vete a la verga igual', 'CHINGA TU MADRE', 'and4te a la verga', 'putooo', 'conchetumare']) {
+    r = await api('POST', '/api/messages', { text: frase }, tokenB);
+    ok(r.status === 400 && r.body.ofensivo, `Bloquea: "${frase}"`);
+  }
   r = await api('POST', '/api/messages', { text: 'gracias, nos vemos el jueves' }, tokenB);
   ok(r.status === 200, 'Permite mensaje respetuoso');
+  r = await api('POST', '/api/messages', { text: 'llevo a los niños al colegio a las 8' }, tokenB);
+  ok(r.status === 200, 'No hay falsos positivos en un mensaje normal');
 
   // 18. Reembolsos, auditoría, cambiar contraseña, calendario .ics
   r = await api('POST', '/api/settlements', { amount: 5000, from: 'B', to: 'A', date: '2026-08-10', note: 'abono' }, tokenB);
@@ -170,6 +176,19 @@ try {
   const icsRes = await fetch(base + `/api/cal/${fid}/${ctok}.ics`);
   const icsTxt = await icsRes.text();
   ok(icsRes.status === 200 && icsTxt.includes('BEGIN:VCALENDAR'), 'Feed .ics del calendario funciona');
+
+  // 19. Tareas (colegio/hogar) sincronizadas entre padres
+  r = await api('POST', '/api/tasks', { title: 'Maqueta del sistema solar', type: 'colegio', subject: 'Ciencias', due: '2026-09-01', done: false }, tokenA);
+  const taskId = r.body.id;
+  ok(r.status === 200 && taskId, 'A crea una tarea de colegio');
+  r = await api('GET', '/api/state', null, tokenB);
+  ok(Array.isArray(r.body.tasks) && r.body.tasks.length === 1 && r.body.tasks[0].title.includes('Maqueta'), 'B ve la tarea (sincronizada)');
+  r = await api('PATCH', '/api/tasks/' + taskId, { title: 'Maqueta del sistema solar', type: 'colegio', done: true }, tokenB);
+  ok(r.status === 200 && r.body.done === true, 'B marca la tarea como hecha');
+  r = await api('POST', '/api/tasks', { title: 'Tender la cama', type: 'hogar', done: false }, tokenB);
+  ok(r.status === 200 && r.body.id, 'B crea un quehacer del hogar');
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(r.body.tasks.length === 2, 'A ve ambas tareas');
 
   console.log(`\n✅ ${pass} pruebas pasaron. Backend funciona de extremo a extremo.`);
 } catch (e) {
