@@ -194,6 +194,12 @@ try {
   r = await api('GET', '/api/admin/payments', null, null, { 'x-admin-key': 'testadmin' });
   ok(r.status === 200 && Array.isArray(r.body.payments), 'Admin lista pagos');
 
+  // 20a. OCR: sin ANTHROPIC_API_KEY responde 503 (no rompe la app)
+  r = await api('POST', '/api/ocr/evaluaciones', { image: 'data:image/jpeg;base64,xxxx' }, tokenB);
+  ok(r.status === 503 && r.body.sinIA, 'OCR evaluaciones responde 503 sin llave de IA');
+  r = await api('POST', '/api/ocr/horario', { image: 'data:image/jpeg;base64,xxxx' }, tokenB);
+  ok(r.status === 503 && r.body.sinIA, 'OCR horario responde 503 sin llave de IA');
+
   // 20b. Respaldo completo de la base
   r = await api('GET', '/api/admin/backup', null, null, { 'x-admin-key': 'malo' });
   ok(r.status === 401, 'Respaldo rechaza clave incorrecta');

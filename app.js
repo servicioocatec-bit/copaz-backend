@@ -1118,6 +1118,8 @@ function modalHijoVer(id) {
     <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Notas de horario</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
     <div style="margin-top:14px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">📚 Horario de materias</div>${horarioGrid(k.timetable)}
       <button class="btn block outline" style="margin-top:8px" onclick="modalHorario('${k.id}')">Editar horario de materias</button>
+      ${CLOUD ? `<button class="btn block ghost" style="margin-top:8px" onclick="modalLeerHorario('${k.id}')">📷 Leer horario desde una foto</button>
+      <button class="btn block ghost" style="margin-top:8px" onclick="modalLeerFoto('${k.id}')">📷 Leer evaluaciones desde una foto</button>` : ''}
       <button class="btn block ghost" style="margin-top:8px" onclick="cargarDatosColegio('${k.id}')">📥 Cargar datos del colegio (6° básico)</button>
       ${((k.timetable && k.timetable.length) || (D().tasks || []).some(t => t.kid === k.id)) ? `<button class="btn block ghost" style="margin-top:8px" onclick="exportarColegioPDF('${k.id}')">🧾 Exportar horario y evaluaciones (PDF)</button>` : ''}</div>
     ${k.docPhoto ? `<div style="margin-top:16px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">🖼️ Horario / calendario (foto)</div>
@@ -1274,6 +1276,77 @@ function cargarDatosColegio(kidId) {
     <button class="btn block" id="cole-go">${yaCargado ? 'Cargar de nuevo' : 'Cargar ahora'}</button>`);
   $('#cole-go').onclick = seguir;
 }
+/* Leer una foto del calendario de evaluaciones con IA y crear las tareas. */
+function modalLeerFoto(kidId) {
+  if (!CLOUD) return toast('Disponible solo en modo nube (con servidor)');
+  openSheet('Leer calendario (foto) 📷', `
+    <p class="hint" style="margin-bottom:12px">Toma o sube una foto clara del <b>calendario de evaluaciones</b>. La app la lee sola y crea las evaluaciones como tareas de este hijo/a, con recordatorio 1 día antes.</p>
+    <label class="btn block" style="cursor:pointer">📷 Elegir o tomar foto<input id="ocr-img" type="file" accept="image/*" capture="environment" style="display:none"></label>
+    <div id="ocr-out" style="margin-top:12px"></div>`);
+  $('#ocr-img').onchange = (ev) => act(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    $('#ocr-out').innerHTML = `<div class="empty"><div class="ic">⏳</div><p>Leyendo la foto… puede tardar unos segundos</p></div>`;
+    const img = await comprimirImagen(f, 1600, 0.75);
+    let out;
+    try { out = await Cloud.ocrEvaluaciones(img); }
+    catch (e) { $('#ocr-out').innerHTML = `<div class="empty"><div class="ic">⚠️</div><p>${esc(e.message || 'No se pudo leer la foto')}</p></div>`; return; }
+    const evs = out.evaluaciones || [];
+    window._ocrEvals = evs.map(e => ({ ...e, _on: true }));
+    if (!evs.length) { $('#ocr-out').innerHTML = `<div class="empty"><div class="ic">🔍</div><p>No encontré evaluaciones. Prueba con una foto más nítida y recta.</p></div>`; return; }
+    renderOcrLista(kidId);
+  });
+}
+function renderOcrLista(kidId) {
+  const evs = window._ocrEvals || [];
+  const el = $('#ocr-out'); if (!el) return;
+  el.innerHTML = `<div class="section-title">Encontradas <span class="count">${evs.length}</span></div>
+    <div class="card">${evs.map((e, i) => `<label class="list-row" style="cursor:pointer">
+      <input type="checkbox" ${e._on ? 'checked' : ''} onchange="window._ocrEvals[${i}]._on=this.checked" style="width:20px;height:20px;flex:none">
+      <div class="body" style="margin-left:10px"><div class="t">${esc(e.subject || 'Evaluación')} · ${esc(fechaLarga(e.due))}</div>
+        <div class="s">${esc(e.tipo || '')}${e.contenido ? ' · ' + esc(e.contenido) : ''}</div></div></label>`).join('')}</div>
+    <button class="btn block" onclick="guardarOcr('${kidId}')" style="margin-top:10px">Agregar seleccionadas</button>`;
+}
+function guardarOcr(kidId) {
+  const sel = (window._ocrEvals || []).filter(e => e._on);
+  if (!sel.length) return toast('Selecciona al menos una');
+  act(async () => {
+    const tareas = sel.map(e => ({ title: e.contenido || e.subject || 'Evaluación', subject: e.subject || '', kid: kidId, due: e.due, type: 'colegio', note: `${e.tipo || ''} (leído de foto)`.trim(), done: false, origen: 'ocr' }));
+    await Store.bulkCreate('tasks', tareas);
+    window._ocrEvals = null; closeSheet(); render(); toast(`✓ ${tareas.length} evaluaciones agregadas`);
+  });
+}
+/* Leer una foto del horario de materias con IA y llenar la grilla. */
+function modalLeerHorario(kidId) {
+  if (!CLOUD) return toast('Disponible solo en modo nube (con servidor)');
+  openSheet('Leer horario (foto) 📷', `
+    <p class="hint" style="margin-bottom:12px">Toma o sube una foto clara del <b>horario de materias</b>. La app la lee y llena la grilla de este hijo/a.</p>
+    <label class="btn block" style="cursor:pointer">📷 Elegir o tomar foto<input id="och-img" type="file" accept="image/*" capture="environment" style="display:none"></label>
+    <div id="och-out" style="margin-top:12px"></div>`);
+  $('#och-img').onchange = (ev) => act(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    $('#och-out').innerHTML = `<div class="empty"><div class="ic">⏳</div><p>Leyendo la foto… puede tardar unos segundos</p></div>`;
+    const img = await comprimirImagen(f, 1600, 0.75);
+    let out;
+    try { out = await Cloud.ocrHorario(img); }
+    catch (e) { $('#och-out').innerHTML = `<div class="empty"><div class="ic">⚠️</div><p>${esc(e.message || 'No se pudo leer la foto')}</p></div>`; return; }
+    const hs = out.horario || [];
+    window._ocrHorario = hs;
+    if (!hs.length) { $('#och-out').innerHTML = `<div class="empty"><div class="ic">🔍</div><p>No pude leer el horario. Prueba con una foto más nítida y recta.</p></div>`; return; }
+    $('#och-out').innerHTML = `<div class="section-title">Vista previa <span class="count">${hs.length} bloques</span></div>
+      ${horarioGrid(hs)}
+      <button class="btn block" onclick="guardarHorarioOcr('${kidId}')" style="margin-top:10px">Usar este horario</button>
+      <div class="hint" style="margin-top:6px">Reemplaza el horario actual. Luego puedes ajustarlo a mano.</div>`;
+  });
+}
+function guardarHorarioOcr(kidId) {
+  const hs = window._ocrHorario || [];
+  if (!hs.length) return toast('No hay horario para guardar');
+  act(async () => {
+    const k = D().kids.find(x => x.id === kidId); if (!k) return;
+    await Store.update('kids', kidId, { ...k, timetable: hs });
+    window._ocrHorario = null; closeSheet(); render(); toast('✓ Horario cargado');
+  });
+}
 function modalHijo(id) {
   const k = id ? D().kids.find(x => x.id === id) : {};
   openSheet(id ? 'Editar hijo/a' : 'Nuevo hijo/a', `
@@ -1408,7 +1481,7 @@ function modalAjustes() {
     ${inviteRow}
     ${CLOUD ? `<button class="btn block danger" onclick="modalEliminarCuenta()" style="margin-top:10px">🗑️ Eliminar mi cuenta</button>` : ''}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
-    <p class="hint" style="text-align:center;margin-top:14px">Copaz v25 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
+    <p class="hint" style="text-align:center;margin-top:14px">Copaz v26 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
   if (!CLOUD) segBind('#st-me');
   $('#st-save').onclick = () => act(async () => {
     const parents = { A: $('#st-a').value.trim() || 'Yo', B: $('#st-b').value.trim() || 'Otro' };
@@ -1677,4 +1750,5 @@ Object.assign(window, {
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
   viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel, cargarDatosColegio,
   exportarTareasPDF, exportarColegioPDF, verImagenHijoDoc, modalAgenda, modalAyuda, modalEliminarCuenta,
+  modalLeerFoto, guardarOcr, modalLeerHorario, guardarHorarioOcr,
 });

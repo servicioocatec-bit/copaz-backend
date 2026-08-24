@@ -58,6 +58,8 @@ const Cloud = {
   changePassword(actual, nueva)   { return this.req('POST', '/api/auth/change-password', { actual, nueva }); },
   audit()                         { return this.req('GET', '/api/audit'); },
   deleteAccount(password)         { return this.req('DELETE', '/api/account', { password }); },
+  ocrEvaluaciones(image)          { return this.req('POST', '/api/ocr/evaluaciones', { image }); },
+  ocrHorario(image)               { return this.req('POST', '/api/ocr/horario', { image }); },
 
   // --- Estado ---
   state()             { return this.req('GET', '/api/state'); },
