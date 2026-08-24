@@ -55,6 +55,8 @@ const Cloud = {
   reset(token, password)          { return this.req('POST', '/api/auth/reset', { token, password }); },
   verify(token)                   { return this.req('POST', '/api/auth/verify', { token }); },
   resendVerify()                  { return this.req('POST', '/api/auth/resend-verify'); },
+  changePassword(actual, nueva)   { return this.req('POST', '/api/auth/change-password', { actual, nueva }); },
+  audit()                         { return this.req('GET', '/api/audit'); },
 
   // --- Estado ---
   state()             { return this.req('GET', '/api/state'); },
@@ -66,7 +68,7 @@ const Cloud = {
   remove(entity, id)       { return this.req('DELETE', `/api/${entity}/${id}`); },
 
   // --- Mensajes ---
-  sendMessage(text) { return this.req('POST', '/api/messages', { text }); },
+  sendMessage(text, image) { return this.req('POST', '/api/messages', { text, image }); },
 
   // --- Notificaciones push ---
   vapid()            { return this.req('GET', '/api/push/vapid'); },

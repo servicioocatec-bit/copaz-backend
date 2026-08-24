@@ -31,7 +31,9 @@ async function nombreDe(familyId, role) {
 }
 async function sendPush(familyId, exceptRole, payload) {
   if (!VAPID_PUBLIC) return;
-  const subs = (await q(`SELECT endpoint, sub FROM push_subs WHERE family_id=$1 AND role<>$2`, [familyId, exceptRole])).rows;
+  const subs = exceptRole
+    ? (await q(`SELECT endpoint, sub FROM push_subs WHERE family_id=$1 AND role<>$2`, [familyId, exceptRole])).rows
+    : (await q(`SELECT endpoint, sub FROM push_subs WHERE family_id=$1`, [familyId])).rows;
   await Promise.all(subs.map(async s => {
     try { await webpush.sendNotification(s.sub, JSON.stringify(payload)); }
     catch (e) { if (e.statusCode === 404 || e.statusCode === 410) await q(`DELETE FROM push_subs WHERE endpoint=$1`, [s.endpoint]); }
@@ -51,6 +53,62 @@ function makeIpLimiter(windowMs, max) {
     if (e.count > max) return res.status(429).json({ error: 'Demasiadas solicitudes. Espera un momento e intenta de nuevo.' });
     next();
   };
+}
+
+/* Custodio ('A'/'B') de una fecha según el esquema — reutilizado en .ics y recordatorios. */
+function custodioCalc(sched, isoStr) {
+  sched = sched || { type: 'semanal', startParent: 'A', start: null };
+  const start = sched.start || isoStr;
+  const n = Math.round((new Date(isoStr + 'T00:00') - new Date(start + 'T00:00')) / 86400000);
+  if (n < 0) return sched.startParent;
+  const first = sched.startParent || 'A', second = first === 'A' ? 'B' : 'A';
+  const P = {
+    '2-2-3': [first,first,second,second,first,first,first,second,second,first,first,second,second,second],
+    '2-2-5-5': [first,first,second,second,first,first,first,first,first,second,second,second,second,second],
+    '3-4-4-3': [first,first,first,second,second,second,second,first,first,first,first,second,second,second],
+  };
+  if (P[sched.type]) return P[sched.type][((n % 14) + 14) % 14];
+  if (sched.type === 'semanal') return Math.floor(n / 7) % 2 === 0 ? first : second;
+  return n % 2 === 0 ? first : second;
+}
+
+/* Recordatorios automáticos: eventos próximos y cambios de custodia (push a ambos padres). */
+export function startReminders() {
+  const pad = n => String(n).padStart(2, '0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const run = async () => {
+    if (!VAPID_PUBLIC) return;
+    try {
+      const now = new Date();
+      const hoy = iso(now);
+      const manana = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+      const fams = (await q(`SELECT id, parents, schedule, last_custody_reminder FROM families`)).rows;
+      for (const f of fams) {
+        const evs = (await q(`SELECT id, data FROM events WHERE family_id=$1`, [f.id])).rows;
+        for (const row of evs) {
+          const e = row.data; if (!e || e.reminded || !e.date) continue;
+          if (e.date === hoy || e.date === manana) {
+            sendPush(f.id, null, { title: 'Recordatorio', body: `${e.title || 'Evento'}${e.time ? ' · ' + e.time : ''} (${e.date === hoy ? 'hoy' : 'mañana'})`, url: './#/calendario', tag: 'recordatorio' }).catch(() => {});
+            await q(`UPDATE events SET data=$1 WHERE id=$2`, [JSON.stringify({ ...e, reminded: true }), row.id]);
+          }
+        }
+        if (custodioCalc(f.schedule, hoy) !== custodioCalc(f.schedule, manana) && f.last_custody_reminder !== hoy) {
+          const who = custodioCalc(f.schedule, manana);
+          sendPush(f.id, null, { title: 'Cambio de custodia', body: `Mañana los niños pasan con ${(f.parents || {})[who] || who}`, url: './#/inicio', tag: 'custodia' }).catch(() => {});
+          await q(`UPDATE families SET last_custody_reminder=$1 WHERE id=$2`, [hoy, f.id]);
+        }
+      }
+    } catch (e) { /* silencioso */ }
+  };
+  setTimeout(run, 15000);        // primera pasada al arrancar
+  setInterval(run, 30 * 60000);  // cada 30 minutos
+}
+
+async function logAudit(familyId, actor, action, detail) {
+  try {
+    await q(`INSERT INTO audit (id, family_id, actor, action, detail, ts) VALUES ($1,$2,$3,$4,$5,$6)`,
+      [Date.now().toString(36) + Math.random().toString(36).slice(2, 7), familyId, actor || '', action, String(detail || '').slice(0, 200), Date.now()]);
+  } catch {}
 }
 
 export function buildRouter(broadcast) {
@@ -78,8 +136,9 @@ export function buildRouter(broadcast) {
 
     const trialDias = Math.max(0, Number(process.env.TRIAL_DAYS || 30));
     const trialUntil = new Date(Date.now() + trialDias * 86400000).toISOString();
-    await q(`INSERT INTO families (id, invite_code, parents, trial_until) VALUES ($1,$2,$3,$4)`,
-      [familyId, invite, JSON.stringify({ A: name, B: '' }), trialUntil]);
+    const calTok = crypto.randomBytes(12).toString('hex');
+    await q(`INSERT INTO families (id, invite_code, parents, trial_until, cal_token) VALUES ($1,$2,$3,$4,$5)`,
+      [familyId, invite, JSON.stringify({ A: name, B: '' }), trialUntil, calTok]);
 
     const userId = uid();
     const vtoken = crypto.randomBytes(24).toString('hex');
@@ -170,6 +229,11 @@ export function buildRouter(broadcast) {
     if (!state) return res.status(404).json({ error: 'Familia no encontrada' });
     const me = (await q(`SELECT email_verified FROM users WHERE id=$1`, [req.user.uid])).rows[0];
     state.me = { verified: !!(me && me.email_verified) };
+    if (!state.family.calToken) {
+      const tok = crypto.randomBytes(12).toString('hex');
+      await q(`UPDATE families SET cal_token=$1 WHERE id=$2`, [tok, req.user.family_id]);
+      state.family.calToken = tok;
+    }
     res.json(state);
   });
 
@@ -317,20 +381,21 @@ export function buildRouter(broadcast) {
      Los mensajes son inmutables: solo se crean y se listan. */
   r.post('/messages', requireAuth, async (req, res) => {
     const text = String(req.body.text || '').trim();
-    if (!text) return res.status(400).json({ error: 'Mensaje vacío' });
-    if (GROSERIAS.test(text)) return res.status(400).json({ error: 'El mensaje contiene lenguaje ofensivo. Reformúlalo, por favor.', ofensivo: true });
+    const image = req.body.image && /^data:image\//.test(req.body.image) ? req.body.image : null;
+    if (!text && !image) return res.status(400).json({ error: 'Mensaje vacío' });
+    if (text && GROSERIAS.test(text)) return res.status(400).json({ error: 'El mensaje contiene lenguaje ofensivo. Reformúlalo, por favor.', ofensivo: true });
     const id = uid(); const ts = Date.now();
-    await q(`INSERT INTO messages (id, family_id, sender, role, text, ts) VALUES ($1,$2,$3,$4,$5,$6)`,
-      [id, req.user.family_id, req.user.uid, req.user.role, text, ts]);
-    broadcast(req.user.family_id, { type: 'message', message: { id, from: req.user.role, text, ts } });
+    await q(`INSERT INTO messages (id, family_id, sender, role, text, image, ts) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, req.user.family_id, req.user.uid, req.user.role, text, image, ts]);
+    broadcast(req.user.family_id, { type: 'message', message: { id, from: req.user.role, text, image, ts } });
     nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
-      title: n, body: text.slice(0, 120), url: './#/mensajes', tag: 'mensajes',
+      title: n, body: image && !text ? '📷 Envió una foto' : text.slice(0, 120), url: './#/mensajes', tag: 'mensajes',
     })).catch(() => {});
-    res.json({ id, from: req.user.role, text, ts });
+    res.json({ id, from: req.user.role, text, image, ts });
   });
 
   /* --------------------- CRUD genérico por entidad ------------------ */
-  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal'];
+  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements'];
   const guard = (t, res) => { if (!ENTITIES.includes(t)) { res.status(404).json({ error: 'Entidad no válida' }); return false; } return true; };
 
   // Crear
@@ -349,7 +414,12 @@ export function buildRouter(broadcast) {
       nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
         title: 'Nuevo gasto', body: `${n} registró: ${(data.title || '').slice(0, 60)}`, url: './#/gastos', tag: 'gasto',
       })).catch(() => {});
+    } else if (t === 'settlements') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Reembolso registrado', body: `${n} registró un abono`, url: './#/gastos', tag: 'abono',
+      })).catch(() => {});
     }
+    logAudit(req.user.family_id, req.user.role, 'crear', `${t}: ${data.title || data.name || data.text || ''}`);
     res.json({ id, ...data });
   });
 
@@ -362,6 +432,7 @@ export function buildRouter(broadcast) {
       [JSON.stringify(data), req.params.id, req.user.family_id]);
     if (!upd.rowCount) return res.status(404).json({ error: 'No encontrado' });
     broadcast(req.user.family_id, { type: 'sync' });
+    logAudit(req.user.family_id, req.user.role, 'editar', `${t}: ${data.title || data.name || ''}`);
     res.json({ id: req.params.id, ...data });
   });
 
@@ -371,7 +442,67 @@ export function buildRouter(broadcast) {
     if (!guard(t, res)) return;
     await q(`DELETE FROM ${t} WHERE id=$1 AND family_id=$2`, [req.params.id, req.user.family_id]);
     broadcast(req.user.family_id, { type: 'sync' });
+    logAudit(req.user.family_id, req.user.role, 'borrar', t);
     res.json({ ok: true });
+  });
+
+  // Historial de actividad (auditoría) de la familia.
+  r.get('/audit', requireAuth, async (req, res) => {
+    const rows = (await q(`SELECT actor, action, detail, ts FROM audit WHERE family_id=$1 ORDER BY ts DESC LIMIT 100`, [req.user.family_id])).rows;
+    res.json({ audit: rows });
+  });
+
+  // Cambiar contraseña desde Ajustes (con la contraseña actual).
+  r.post('/auth/change-password', requireAuth, async (req, res) => {
+    const { actual, nueva } = req.body || {};
+    if (!nueva || String(nueva).length < 6) return res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' });
+    const u = (await q(`SELECT password FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    if (!u || !(await compare(actual || '', u.password))) return res.status(401).json({ error: 'La contraseña actual no es correcta' });
+    await q(`UPDATE users SET password=$1 WHERE id=$2`, [await hash(nueva), req.user.uid]);
+    res.json({ ok: true });
+  });
+
+  // Feed de calendario (.ics) para suscribir en Google/Apple Calendar. Público con token.
+  r.get('/cal/:familyId/:token.ics', async (req, res) => {
+    const fam = (await q(`SELECT * FROM families WHERE id=$1`, [req.params.familyId])).rows[0];
+    if (!fam || !fam.cal_token || fam.cal_token !== req.params.token) return res.status(404).send('No encontrado');
+    const evs = (await q(`SELECT data FROM events WHERE family_id=$1`, [req.params.familyId])).rows.map(r => r.data);
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+    const parents = fam.parents || {};
+    const sched = fam.schedule || { type: 'semanal', start: null, startParent: 'A' };
+    const custodioDe = (isoStr) => {
+      const start = sched.start || isoStr;
+      const n = Math.round((new Date(isoStr + 'T00:00') - new Date(start + 'T00:00')) / 86400000);
+      if (n < 0) return sched.startParent;
+      const first = sched.startParent, second = first === 'A' ? 'B' : 'A';
+      const P = {
+        '2-2-3': [first,first,second,second,first,first,first,second,second,first,first,second,second,second],
+        '2-2-5-5': [first,first,second,second,first,first,first,first,first,second,second,second,second,second],
+        '3-4-4-3': [first,first,first,second,second,second,second,first,first,first,first,second,second,second],
+      };
+      if (P[sched.type]) return P[sched.type][((n % 14) + 14) % 14];
+      if (sched.type === 'semanal') return Math.floor(n / 7) % 2 === 0 ? first : second;
+      return n % 2 === 0 ? first : second;
+    };
+    let ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Copaz//Calendario//ES\r\nX-WR-CALNAME:Copaz — Custodia\r\n';
+    const hoy = new Date();
+    for (let i = 0; i < 90; i++) {
+      const d = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + i);
+      const iso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      const who = custodioDe(iso);
+      const dEnd = new Date(d.getTime() + 86400000);
+      ics += `BEGIN:VEVENT\r\nUID:cust-${iso}@copaz\r\nDTSTART;VALUE=DATE:${fmt(d)}\r\nDTEND;VALUE=DATE:${fmt(dEnd)}\r\nSUMMARY:Con ${parents[who] || who}\r\nEND:VEVENT\r\n`;
+    }
+    for (const e of evs) {
+      if (!e.date) continue;
+      const [y, m, dd] = e.date.split('-').map(Number);
+      const start = new Date(Date.UTC(y, m - 1, dd));
+      const end = new Date(start.getTime() + 86400000);
+      ics += `BEGIN:VEVENT\r\nUID:ev-${e.date}-${Math.random().toString(36).slice(2, 7)}@copaz\r\nDTSTART;VALUE=DATE:${fmt(start)}\r\nDTEND;VALUE=DATE:${fmt(end)}\r\nSUMMARY:${String(e.title || 'Evento').replace(/[\r\n,;]/g, ' ')}${e.time ? ' (' + e.time + ')' : ''}\r\nEND:VEVENT\r\n`;
+    }
+    ics += 'END:VCALENDAR\r\n';
+    res.set('Content-Type', 'text/calendar; charset=utf-8').send(ics);
   });
 
   return r;

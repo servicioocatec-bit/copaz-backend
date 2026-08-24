@@ -116,9 +116,9 @@ const Store = {
     if (this.mode === 'cloud') { await Cloud.remove(entity, id); await this.refresh(); }
     else { this.state[entity] = (this.state[entity] || []).filter(x => x.id !== id); this._save(); }
   },
-  async sendMessage(text) {
-    if (this.mode === 'cloud') { await Cloud.sendMessage(text); await this.refresh(); }
-    else { this.state.messages.push({ id: uid(), from: this.state.auth.role, text, ts: Date.now() }); this._save(); }
+  async sendMessage(text, image) {
+    if (this.mode === 'cloud') { await Cloud.sendMessage(text, image); await this.refresh(); }
+    else { this.state.messages.push({ id: uid(), from: this.state.auth.role, text, image: image || '', ts: Date.now() }); this._save(); }
   },
   async patchFamily(patch) {
     if (this.mode === 'cloud') { await Cloud.patchFamily(patch); await this.refresh(); }
@@ -214,8 +214,10 @@ function proximoCambio() {
   return null;
 }
 function balance() {
-  let net = 0;
+  let net = 0; // >0 => a favor de A (B le debe a A)
   for (const e of D().expenses) { if (e.settled) continue; const debe = e.amount * (1 - e.split / 100); net += e.payer === 'A' ? debe : -debe; }
+  // Reembolsos/abonos: un pago de B a A reduce lo que B le debe a A.
+  for (const s of (D().settlements || [])) { net -= (s.to === 'A' ? s.amount : -s.amount); }
   return net;
 }
 function etiquetaEsquema(t) { return { 'semanal':'Semanal','2-2-3':'2-2-3','2-2-5-5':'2-2-5-5','3-4-4-3':'3-4-4-3','alterna':'Día por medio' }[t] || t; }
@@ -706,14 +708,23 @@ function viewGastos(app) {
         <div style="display:flex;justify-content:space-between;font-size:12.5px"><span style="font-weight:600">${esc(c)}</span><span style="color:var(--slate)">${money(v)} · ${pct}%</span></div>
         <div style="height:6px;background:var(--line);border-radius:99px;margin-top:3px;overflow:hidden"><div style="height:100%;width:${pct}%;background:var(--teal-500)"></div></div></div>`; }).join('')}
       </div></div>` : '';
+  const query = (window.gastoQuery || '').toLowerCase();
+  const filtered = query ? items.filter(e => (e.title + ' ' + e.cat).toLowerCase().includes(query)) : items;
+  const sets = [...(D().settlements || [])].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   app.innerHTML = topbar('Gastos', 'Compartidos y reembolsos',
-    items.length ? `<button class="icon-btn" onclick="exportarGastosCSV()" title="Exportar a CSV">⬇️</button>` : '') + `<div class="screen">
+    items.length ? `<button class="icon-btn" onclick="exportarGastosPDF()" title="Exportar a PDF">🧾</button><button class="icon-btn" onclick="exportarGastosCSV()" title="Exportar a CSV" style="margin-left:6px">⬇️</button>` : '') + `<div class="screen">
     <div class="balance ${cls}"><div class="l">Balance actual</div><div class="v">${money(Math.abs(bal))}</div>
       <div style="opacity:.92;font-size:13.5px;margin-top:2px">${txt}</div></div>
-    ${bal !== 0 ? `<button class="btn block ghost" onclick="saldarTodo()" style="margin-bottom:14px">Marcar todo como saldado</button>` : ''}
+    <div class="row2" style="margin-bottom:14px">
+      ${bal !== 0 ? `<button class="btn ghost" onclick="saldarTodo()">Marcar saldado</button>` : '<div></div>'}
+      <button class="btn ghost" onclick="modalAbono()">＋ Registrar abono</button></div>
     ${resumen}
-    <div class="section-title">Movimientos <span class="count">${items.length}</span></div>
-    <div class="card">${items.length ? items.map(gastoRow).join('') : `<div class="empty"><div class="ic">🧾</div><p>Aún no hay gastos</p></div>`}</div></div>
+    ${items.length ? `<input class="field" style="margin-bottom:10px" placeholder="🔎 Buscar gasto…" value="${esc(window.gastoQuery || '')}" oninput="window.gastoQuery=this.value; clearTimeout(window._gq); window._gq=setTimeout(()=>viewGastos(document.getElementById('app')),250)">` : ''}
+    <div class="section-title">Movimientos <span class="count">${filtered.length}</span></div>
+    <div class="card">${filtered.length ? filtered.map(gastoRow).join('') : `<div class="empty"><div class="ic">🧾</div><p>${items.length ? 'Sin resultados' : 'Aún no hay gastos'}</p></div>`}</div>
+    ${sets.length ? `<div class="section-title">Reembolsos / abonos <span class="count">${sets.length}</span></div>
+      <div class="card">${sets.map(abonoRow).join('')}</div>` : ''}
+    </div>
     <button class="fab" onclick="modalGasto()">＋</button>`;
 }
 function gastoRow(e) {
@@ -777,28 +788,91 @@ function exportarGastosCSV() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `copaz-gastos-${today()}.csv`; a.click();
   URL.revokeObjectURL(a.href); toast('CSV exportado');
 }
+/* Reembolsos / abonos entre padres */
+function abonoRow(s) {
+  const from = s.from || (s.to === 'A' ? 'B' : 'A');
+  return `<div class="list-row"><div class="avatar" style="background:${color(from)}">💵</div>
+    <div class="body"><div class="t">${esc(nombre(from))} → ${esc(nombre(s.to))}</div>
+      <div class="s">${fechaLarga(s.date || today())}${s.note ? ' · ' + esc(s.note) : ''}</div></div>
+    <div class="meta"><div style="font-weight:800;color:var(--green);font-size:15px">${money(s.amount)}</div>
+      <button class="btn sm ghost" style="margin-top:4px" onclick="delAbono('${s.id}')">✕</button></div></div>`;
+}
+const delAbono = (id) => act(async () => { await Store.remove('settlements', id); render(); toast('Eliminado'); });
+function modalAbono() {
+  const bal = balance();
+  const quienPaga = bal < -0.5 ? 'A' : 'B';
+  openSheet('Registrar abono / pago', `
+    <p class="hint" style="margin-bottom:12px">Un pago de un padre al otro (reembolso). Ajusta el balance, no es un gasto nuevo.</p>
+    <div class="field"><label>¿Quién pagó?</label><div class="seg" id="ab-from">
+      <button data-v="A" class="${quienPaga==='A'?'on':''}">${esc(nombre('A'))}</button><button data-v="B" class="${quienPaga==='B'?'on':''}">${esc(nombre('B'))}</button></div></div>
+    <div class="row2"><div class="field"><label>Monto</label><input id="ab-a" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Fecha</label><input id="ab-d" type="date" value="${today()}"></div></div>
+    <div class="field"><label>Nota (opcional)</label><input id="ab-n" placeholder="Transferencia, efectivo…"></div>
+    <button class="btn block" id="ab-save">Guardar abono</button>`);
+  segBind('#ab-from');
+  $('#ab-save').onclick = () => act(async () => {
+    const amount = parseFloat($('#ab-a').value); if (!amount || amount <= 0) return toast('Escribe un monto válido');
+    const from = segVal('#ab-from'), to = from === 'A' ? 'B' : 'A';
+    await Store.create('settlements', { amount, from, to, date: $('#ab-d').value, note: $('#ab-n').value.trim() });
+    closeSheet(); render(); toast('Abono registrado');
+  });
+}
+/* Exportar a PDF (usa el diálogo de imprimir del navegador → guardar como PDF) */
+function imprimirReporte(titulo, cuerpo) {
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permite ventanas emergentes para exportar el PDF'); return; }
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(titulo)} — Copaz</title>
+    <style>body{font-family:Arial,system-ui;padding:24px;color:#0f172a}h1{color:#0f766e;font-size:22px}table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:14px}th,td{border-bottom:1px solid #e2e8f0;padding:7px 6px;text-align:left;vertical-align:top}th{color:#64748b;font-size:10.5px;text-transform:uppercase}.mut{color:#64748b;font-size:12px}</style></head>
+    <body><h1>🕊️ Copaz — ${esc(titulo)}</h1><div class="mut">${esc(nombre('A'))} y ${esc(nombre('B'))} · Generado ${new Date().toLocaleString('es-CL')}</div>
+    ${cuerpo}<scr` + `ipt>setTimeout(function(){window.print()},500)</scr` + `ipt></body></html>`);
+  w.document.close();
+}
+function exportarGastosPDF() {
+  const bal = balance();
+  const rows = [...D().expenses].sort((a, b) => a.date.localeCompare(b.date)).map(e => {
+    const kid = D().kids.find(k => k.id === e.kid);
+    return `<tr><td>${fechaLarga(e.date)}</td><td>${esc(e.title)}</td><td>${esc(e.cat)}${kid ? ' · ' + esc(kid.name) : ''}</td><td>${esc(nombre(e.payer))}</td><td style="text-align:right">${money(e.amount)}</td><td>${e.settled ? 'Sí' : 'No'}</td></tr>`;
+  }).join('');
+  const setRows = (D().settlements || []).map(s => `<tr><td>${fechaLarga(s.date || today())}</td><td>Abono/reembolso</td><td>${esc(s.note || '')}</td><td>${esc(nombre(s.from || (s.to === 'A' ? 'B' : 'A')))} → ${esc(nombre(s.to))}</td><td style="text-align:right">${money(s.amount)}</td><td>—</td></tr>`).join('');
+  const txt = bal > 0.5 ? `${nombre('B')} le debe a ${nombre('A')} ${money(Math.abs(bal))}` : bal < -0.5 ? `${nombre('A')} le debe a ${nombre('B')} ${money(Math.abs(bal))}` : 'Están al corriente';
+  imprimirReporte('Gastos y reembolsos', `<p style="font-weight:700;margin-top:12px">Balance: ${esc(txt)}</p>
+    <table><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Pagó</th><th style="text-align:right">Monto</th><th>Saldado</th></tr>${rows}${setRows}</table>`);
+}
+function exportarMensajesPDF() {
+  const rows = D().messages.map(m => `<tr><td style="white-space:nowrap">${new Date(m.ts).toLocaleString('es-CL')}</td><td>${esc(nombre(m.from))}</td><td>${esc(m.text || '')}${m.image ? ' [foto adjunta]' : ''}</td></tr>`).join('');
+  imprimirReporte('Historial de mensajes', `<table><tr><th>Fecha y hora</th><th>De</th><th>Mensaje</th></tr>${rows}</table>`);
+}
 const saldar = (id) => act(async () => { const e = D().expenses.find(x => x.id === id); if (e) { await Store.update('expenses', id, { ...e, settled: true }); render(); toast('Marcado como saldado'); } });
 const saldarTodo = () => act(async () => { for (const e of D().expenses.filter(x => !x.settled)) await Store.update('expenses', e.id, { ...e, settled: true }); render(); toast('Todo saldado ✓'); });
 
 /* ============================== MENSAJES ============================= */
 function viewMensajes(app) {
   const me = meRole();
+  const q = (window.msgQuery || '').toLowerCase();
+  const msgs = q ? D().messages.filter(m => (m.text || '').toLowerCase().includes(q)) : D().messages;
   app.innerHTML = topbar('Mensajes', 'Con ' + nombre(me === 'A' ? 'B' : 'A'),
-    `<button class="icon-btn" onclick="exportarMensajes()" title="Guardar copia">⬇️</button>`) + `<div class="screen">
-    <div class="card tight" style="background:var(--teal-50);border-color:var(--teal-200);margin-bottom:14px">
-      <div style="font-size:12.5px;color:var(--teal-800)">🕊️ Un solo lugar para acordar lo de los niños, con calma y sin malentendidos. Todo queda ordenado por fecha, así nadie tiene que recordar quién dijo qué.</div></div>
+    `<button class="icon-btn" onclick="exportarMensajesPDF()" title="Exportar a PDF">🧾</button><button class="icon-btn" onclick="exportarMensajes()" title="Guardar copia (.txt)" style="margin-left:6px">⬇️</button>`) + `<div class="screen">
+    <input class="field" style="margin-bottom:10px" placeholder="🔎 Buscar en mensajes…" value="${esc(window.msgQuery || '')}" oninput="window.msgQuery=this.value; clearTimeout(window._mq); window._mq=setTimeout(()=>viewMensajes(document.getElementById('app')),250)">
     <div class="msg-wrap" id="msg-wrap"></div>
     <div class="composer"><div class="tone" id="tone"></div><div class="box">
+      <label class="send" style="background:var(--teal-50);color:var(--teal-700);cursor:pointer">📷<input id="msg-img" type="file" accept="image/*" style="display:none"></label>
       <textarea id="msg-in" rows="1" placeholder="Escribe un mensaje respetuoso…"></textarea>
       <button class="send" id="msg-send">➤</button></div></div></div>`;
   const wrap = $('#msg-wrap');
-  wrap.innerHTML = D().messages.map(m => {
+  wrap.innerHTML = msgs.map(m => {
     const mine = m.from === me;
     return `<div class="msg ${mine ? 'me' : 'them'}">
       ${mine ? '' : `<div style="font-size:11px;font-weight:700;color:${color(m.from)};margin-bottom:2px">${esc(nombre(m.from))}</div>`}
-      <div>${esc(m.text)}</div>
+      ${m.image ? `<img src="${m.image}" onclick="verImagenMensaje('${m.id}')" style="max-width:200px;border-radius:10px;display:block;margin-bottom:${m.text ? '6px' : '0'};cursor:pointer">` : ''}
+      ${m.text ? `<div>${esc(m.text)}</div>` : ''}
       <div class="time">${new Date(m.ts).toLocaleString('es-MX',{ day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit' })}</div></div>`;
   }).join('');
+  const imgIn = $('#msg-img');
+  if (imgIn) imgIn.onchange = (ev) => act(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    const data = await comprimirImagen(f);
+    await Store.sendMessage('', data); render();
+  });
   setTimeout(() => wrap.scrollIntoView({ block: 'end' }), 0);
   // marcar como leídos
   localStorage.setItem('copaz.msgSeen', String(Date.now()));
@@ -905,7 +979,7 @@ function viewHijos(app) {
 function kidCard(k) {
   const edad = k.dob ? calcEdad(k.dob) : null;
   return `<div class="card"><div class="kid-card" onclick="modalHijoVer('${k.id}')" style="cursor:pointer">
-      <div class="ph" style="background:${k.color || '#0d9488'}">${inicial(k.name)}</div>
+      <div class="ph" style="background:${k.photo ? `center/cover no-repeat url('${k.photo}')` : (k.color || '#0d9488')}">${k.photo ? '' : inicial(k.name)}</div>
       <div style="flex:1"><div style="font-weight:800;font-size:17px">${esc(k.name)}</div>
         <div style="font-size:13px;color:var(--slate)">${edad !== null ? edad+' años' : 'Sin fecha de nacimiento'}${k.grade ? ' · '+esc(k.grade) : ''}</div></div>
       <div class="meta">›</div></div>
@@ -917,7 +991,7 @@ function modalHijoVer(id) {
   const k = D().kids.find(x => x.id === id); if (!k) return;
   const row = (l, v) => v ? `<dt>${l}</dt><dd>${esc(v)}</dd>` : '';
   openSheet(k.name, `
-    <div class="kid-card" style="margin-bottom:6px"><div class="ph" style="background:${k.color||'#0d9488'};width:64px;height:64px;font-size:28px">${inicial(k.name)}</div>
+    <div class="kid-card" style="margin-bottom:6px"><div class="ph" style="background:${k.photo ? `center/cover no-repeat url('${k.photo}')` : (k.color||'#0d9488')};width:64px;height:64px;font-size:28px">${k.photo ? '' : inicial(k.name)}</div>
       <div><div style="font-weight:800;font-size:20px">${esc(k.name)}</div>
         <div style="color:var(--slate)">${k.dob ? calcEdad(k.dob)+' años · '+k.dob : 'Sin fecha de nacimiento'}</div></div></div>
     <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Horario escolar</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
@@ -936,13 +1010,21 @@ function modalHijo(id) {
     <div class="field"><label>Médico / pediatra</label><input id="k-doc" value="${esc(k.doctor||'')}"></div>
     <div class="field"><label>Contacto de emergencia</label><input id="k-em" value="${esc(k.emergency||'')}" placeholder="Nombre y teléfono"></div>
     <div class="field"><label>Horario escolar</label><textarea id="k-sched" style="min-height:110px" placeholder="Ej.\nLun a Vie: 8:00–14:00\nMartes: natación 16:00\nViernes: salida 12:30">${esc(k.schedule||'')}</textarea></div>
+    <div class="field"><label>Foto (opcional)</label><input id="k-img" type="file" accept="image/*">
+      <div id="k-prev" style="margin-top:8px">${k.photo ? `<img src="${k.photo}" style="width:72px;height:72px;object-fit:cover;border-radius:18px">` : ''}</div></div>
     <div class="field"><label>Notas</label><textarea id="k-notes">${esc(k.notes||'')}</textarea></div>
     <button class="btn block" id="k-save">Guardar</button>`);
+  let photoData = k.photo || '';
+  $('#k-img').onchange = (ev) => act(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    photoData = await comprimirImagen(f, 400, 0.7);
+    $('#k-prev').innerHTML = `<img src="${photoData}" style="width:72px;height:72px;object-fit:cover;border-radius:18px">`;
+  });
   $('#k-save').onclick = () => act(async () => {
     const name = $('#k-name').value.trim(); if (!name) return toast('Escribe el nombre');
     const obj = { name, dob: $('#k-dob').value, bloodType: $('#k-blood').value.trim(), school: $('#k-school').value.trim(), grade: $('#k-grade').value.trim(),
       allergies: $('#k-all').value.trim(), meds: $('#k-meds').value.trim(), doctor: $('#k-doc').value.trim(), emergency: $('#k-em').value.trim(),
-      schedule: $('#k-sched').value.trim(), notes: $('#k-notes').value.trim() };
+      schedule: $('#k-sched').value.trim(), notes: $('#k-notes').value.trim(), photo: photoData || '' };
     if (id) { await Store.update('kids', id, { ...k, ...obj }); }
     else { await Store.create('kids', { ...obj, color: ['#0d9488','#f97316','#2563eb','#e11d48'][D().kids.length % 4] }); }
     closeSheet(); render(); toast('Guardado');
@@ -959,6 +1041,7 @@ function docRow(d) {
 }
 const verImagenDoc = (id) => { const d = D().docs.find(x => x.id === id); if (d && d.image) verImagen(d.image); };
 const verReciboGasto = (id) => { const e = D().expenses.find(x => x.id === id); if (e && e.receipt) verImagen(e.receipt); };
+const verImagenMensaje = (id) => { const m = D().messages.find(x => x.id === id); if (m && m.image) verImagen(m.image); };
 function modalDoc() {
   openSheet('Registrar documento o boleta', `
     <div class="field"><label>Nombre</label><input id="d-name" placeholder="Ej. Convenio de custodia, boleta colegiatura…"></div>
@@ -1029,6 +1112,9 @@ function modalAjustes() {
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
     <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
+    ${CLOUD ? `<button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
+    <button class="btn block outline" onclick="modalActividad()" style="margin-top:10px">🕘 Actividad reciente</button>
+    <button class="btn block outline" onclick="modalCalendario()" style="margin-top:10px">📆 Suscribir calendario</button>` : ''}
     ${inviteRow}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
     <p class="hint" style="text-align:center;margin-top:14px">Copaz v1 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
@@ -1043,6 +1129,40 @@ function modalAjustes() {
   if (rst) rst.onclick = () => { if (confirm('¿Borrar todos los datos? No se puede deshacer.')) { Store.wipeLocal(); closeSheet(); go('inicio'); render(); } };
 }
 function cerrarSesion() { Store.logout(); closeSheet(); location.hash = ''; render(); }
+function modalCambiarClave() {
+  openSheet('Cambiar contraseña', `
+    <div class="field"><label>Contraseña actual</label><input id="cp-a" type="password"></div>
+    <div class="field"><label>Nueva contraseña</label><input id="cp-n" type="password" placeholder="Mínimo 6 caracteres"></div>
+    <button class="btn block" id="cp-go">Guardar</button>`);
+  $('#cp-go').onclick = () => act(async () => {
+    const a = $('#cp-a').value, n = $('#cp-n').value; if (n.length < 6) return toast('Mínimo 6 caracteres');
+    await Cloud.changePassword(a, n); closeSheet(); toast('Contraseña actualizada ✓');
+  });
+}
+function modalActividad() {
+  openSheet('Actividad reciente', `<div id="act-list"><div class="empty"><div class="ic">🕘</div><p>Cargando…</p></div></div>`);
+  act(async () => {
+    const { audit } = await Cloud.audit();
+    const acc = { crear: 'agregó', editar: 'editó', borrar: 'eliminó' };
+    const ent = { kids: 'hijo/a', events: 'evento', expenses: 'gasto', docs: 'documento', swaps: 'intercambio', journal: 'nota', settlements: 'abono' };
+    const trad = (d = '') => d.replace(/^(\w+)(:?)/, (m, w, c) => (ent[w] || w) + c);
+    $('#act-list').innerHTML = (audit && audit.length) ? audit.map(a => `<div class="list-row">
+      <div class="avatar" style="background:${color(a.actor)}">${inicial(nombre(a.actor))}</div>
+      <div class="body"><div class="t">${esc(nombre(a.actor))} ${acc[a.action] || a.action} ${esc(trad(a.detail || ''))}</div>
+      <div class="s">${new Date(Number(a.ts)).toLocaleString('es-CL')}</div></div></div>`).join('')
+      : `<div class="empty"><div class="ic">🕘</div><p>Sin actividad todavía</p></div>`;
+  });
+}
+function modalCalendario() {
+  const tok = F() && F().calToken, fid = F() && F().id;
+  const url = (tok && fid) ? `${API_BASE}/api/cal/${fid}/${tok}.ics` : '';
+  openSheet('Suscribir calendario 📆', `
+    <p class="hint" style="margin-bottom:12px">Agrega este enlace en Google Calendar o Apple Calendar (Agregar calendario → Desde URL) para ver la custodia y los eventos, siempre actualizados.</p>
+    <div class="field"><input value="${esc(url)}" readonly onclick="this.select()"></div>
+    <button class="btn block" onclick="copiarTexto('${url}')">Copiar enlace</button>
+    <a class="btn block ghost" href="${url}" style="margin-top:10px" download="copaz.ics">Descargar .ics</a>`);
+}
+const copiarTexto = (t) => { if (navigator.clipboard) navigator.clipboard.writeText(t).then(() => toast('Enlace copiado 📋')); else toast('Copia el enlace manualmente'); };
 
 /* =============================== PLANES ============================= */
 function diasPrueba() {
@@ -1154,5 +1274,7 @@ Object.assign(window, {
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
   modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,
   modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota, reenviarVerificacion, alternarTema,
-  verImagen, verImagenDoc, verReciboGasto,
+  verImagen, verImagenDoc, verReciboGasto, verImagenMensaje,
+  modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
+  modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
 });

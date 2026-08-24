@@ -153,6 +153,24 @@ try {
   r = await api('POST', '/api/messages', { text: 'gracias, nos vemos el jueves' }, tokenB);
   ok(r.status === 200, 'Permite mensaje respetuoso');
 
+  // 18. Reembolsos, auditoría, cambiar contraseña, calendario .ics
+  r = await api('POST', '/api/settlements', { amount: 5000, from: 'B', to: 'A', date: '2026-08-10', note: 'abono' }, tokenB);
+  ok(r.status === 200 && r.body.id, 'Registra reembolso/abono');
+  r = await api('GET', '/api/state', null, tokenA);
+  ok(Array.isArray(r.body.settlements) && r.body.settlements.length === 1, 'Reembolso aparece en el estado');
+  r = await api('GET', '/api/audit', null, tokenA);
+  ok(r.status === 200 && Array.isArray(r.body.audit) && r.body.audit.length >= 1, 'Historial de auditoría');
+  r = await api('POST', '/api/auth/change-password', { actual: 'malo', nueva: 'otraclave123' }, tokenA);
+  ok(r.status === 401, 'Cambiar clave rechaza la actual incorrecta');
+  r = await api('POST', '/api/auth/change-password', { actual: 'nuevapass123', nueva: 'otraclave123' }, tokenA);
+  ok(r.status === 200 && r.body.ok, 'Cambia la contraseña con la actual correcta');
+  const st = await api('GET', '/api/state', null, tokenA);
+  const fid = st.body.family.id, ctok = st.body.family.calToken;
+  ok(!!ctok, 'La familia tiene token de calendario');
+  const icsRes = await fetch(base + `/api/cal/${fid}/${ctok}.ics`);
+  const icsTxt = await icsRes.text();
+  ok(icsRes.status === 200 && icsTxt.includes('BEGIN:VCALENDAR'), 'Feed .ics del calendario funciona');
+
   console.log(`\n✅ ${pass} pruebas pasaron. Backend funciona de extremo a extremo.`);
 } catch (e) {
   console.error('\n❌ Falló una prueba:', e.message);

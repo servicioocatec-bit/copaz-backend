@@ -57,6 +57,18 @@ export async function migrate() {
   await entity('docs',     `data JSONB NOT NULL`);
   await entity('swaps',    `data JSONB NOT NULL`);   // solicitudes de intercambio de días
   await entity('journal',  `data JSONB NOT NULL`);   // bitácora / diario de los hijos
+  await entity('settlements', `data JSONB NOT NULL`);// reembolsos / abonos entre padres
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS cal_token TEXT;`);
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS last_custody_reminder TEXT;`);
+  await q(`
+  CREATE TABLE IF NOT EXISTS audit (
+    id         TEXT PRIMARY KEY,
+    family_id  TEXT NOT NULL,
+    actor      TEXT,
+    action     TEXT NOT NULL,
+    detail     TEXT,
+    ts         BIGINT NOT NULL
+  );`);
   await q(`
   CREATE TABLE IF NOT EXISTS messages (
     id         TEXT PRIMARY KEY,
@@ -67,6 +79,7 @@ export async function migrate() {
     ts         BIGINT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
   );`);
+  await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS image TEXT;`);
 
   await q(`CREATE INDEX IF NOT EXISTS idx_kids_fam     ON kids(family_id);`);
   await q(`CREATE INDEX IF NOT EXISTS idx_events_fam   ON events(family_id);`);
@@ -124,7 +137,7 @@ export async function familyState(familyId) {
   const load = async (t) => (await q(`SELECT id, data FROM ${t} WHERE family_id=$1`, [familyId]))
     .rows.map(r => ({ id: r.id, ...r.data }));
   const messages = (await q(
-    `SELECT id, role AS "from", text, ts FROM messages WHERE family_id=$1 ORDER BY ts ASC`, [familyId]
+    `SELECT id, role AS "from", text, image, ts FROM messages WHERE family_id=$1 ORDER BY ts ASC`, [familyId]
   )).rows;
   const ahora = Date.now();
   const premOk = !!(fam.premium_until && new Date(fam.premium_until).getTime() > ahora);
@@ -134,6 +147,7 @@ export async function familyState(familyId) {
       id: fam.id, inviteCode: fam.invite_code, currency: fam.currency,
       schedule: fam.schedule, parents: fam.parents,
       premium: { until: fam.premium_until || null, plan: fam.premium_plan || null },
+      calToken: fam.cal_token || null,
       access: {
         premium: premOk, enTrial: trialOk, activo: premOk || trialOk, bloqueado: !(premOk || trialOk),
         trialUntil: fam.trial_until || null, premiumUntil: fam.premium_until || null, plan: fam.premium_plan || null,
@@ -146,6 +160,7 @@ export async function familyState(familyId) {
     docs:     await load('docs'),
     swaps:    await load('swaps'),
     journal:  await load('journal'),
+    settlements: await load('settlements'),
     messages,
   };
 }
