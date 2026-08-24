@@ -533,6 +533,9 @@ function viewInicio(app) {
       <div class="stat" onclick="go('calendario')" style="cursor:pointer"><div class="ic">📅</div><div class="n">${proxEventos.length}</div><div class="t">próximos eventos</div></div>
       <div class="stat" onclick="go('mensajes')" style="cursor:pointer"><div class="ic">💬</div><div class="n">${D().messages.length}</div><div class="t">mensajes</div></div>
     </div>
+    <button class="btn block outline" style="margin-bottom:12px" onclick="modalAgenda()">📅 Agenda de la semana</button>
+    ${bloqueClasesHoy()}
+    ${bloqueProxEval()}
     <div class="section-title">Próximos eventos <span class="count">${proxEventos.length}</span></div>
     <div class="card">${proxEventos.length ? proxEventos.map(evRow).join('') : `<div class="empty"><div class="ic">🗓️</div><p>Sin eventos próximos</p></div>`}</div>
     ${ultimo.length ? `<div class="section-title">Último mensaje</div>
@@ -541,6 +544,80 @@ function viewInicio(app) {
       <div class="body"><div class="t">${esc(nombre(ultimo[0].from))}</div>
         <div class="s">${esc(ultimo[0].text.slice(0,60))}${ultimo[0].text.length>60?'…':''}</div></div></div></div>` : ''}
   </div>`;
+}
+/* Une bloques contiguos con la misma materia (08:15+09:00 → 08:15–09:45). */
+function mergeBloques(list) {
+  const ord = list.slice().sort((a, b) => String(a.start).localeCompare(b.start));
+  const out = [];
+  for (const b of ord) {
+    const prev = out[out.length - 1];
+    if (prev && prev.subject === b.subject && prev.end && prev.end === b.start) prev.end = b.end;
+    else out.push({ ...b });
+  }
+  return out;
+}
+const diaHoyCorto = () => ['', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie'][new Date().getDay()] || '';
+function bloqueClasesHoy() {
+  const d = diaHoyCorto();
+  const kids = (D().kids || []).filter(k => (k.timetable || []).some(b => b.day === d));
+  if (!d || !kids.length) return '';
+  const filas = kids.map(k => {
+    const bl = mergeBloques((k.timetable || []).filter(b => b.day === d));
+    if (!bl.length) return '';
+    const chips = bl.map(b => `<span style="display:inline-block;background:${subColor(b.subject)};color:#0f172a;border-radius:8px;padding:3px 8px;font-size:12px;font-weight:600;margin:2px 3px 0 0">${esc(b.start)} ${esc(b.subject)}</span>`).join('');
+    return `<div class="list-row"><div class="avatar" style="background:${k.color || '#0d9488'}">${inicial(k.name)}</div>
+      <div class="body"><div class="t">${esc(k.name)}</div><div style="margin-top:2px">${chips}</div></div></div>`;
+  }).join('');
+  return `<div class="section-title">📚 Clases de hoy</div><div class="card">${filas}</div>`;
+}
+function bloqueProxEval() {
+  const hoy = today();
+  const evs = [...(D().tasks || [])].filter(t => !t.done && t.due && t.due >= hoy && t.type !== 'hogar').sort((a, b) => a.due.localeCompare(b.due)).slice(0, 3);
+  if (!evs.length) return '';
+  return `<div class="section-title" onclick="go('tareas')" style="cursor:pointer">📝 Próximas evaluaciones <span class="count">${evs.length}</span></div>
+    <div class="card" onclick="go('tareas')" style="cursor:pointer">${evs.map(t => {
+      const dias = diffDias(hoy, t.due);
+      const cuando = dias === 0 ? 'Hoy' : dias === 1 ? 'Mañana' : (dias <= 7 ? 'En ' + dias + ' días' : fechaLarga(t.due));
+      const kid = D().kids.find(k => k.id === t.kid);
+      return `<div class="list-row"><div class="avatar" style="background:${subColor(t.subject || t.title)};color:#0f172a">${esc(String(t.subject || t.title)[0].toUpperCase())}</div>
+        <div class="body"><div class="t">${esc(t.subject || 'Evaluación')}</div><div class="s">${esc(t.title)}${kid ? ' · ' + esc(kid.name) : ''}</div></div>
+        <div class="meta"><span class="badge ${dias <= 1 ? 'rose' : 'teal'}">${cuando}</span></div></div>`;
+    }).join('')}</div>`;
+}
+/* Agenda semanal: combina horario de clases, evaluaciones y custodia/eventos. */
+function modalAgenda() {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7; // 0 = lunes
+  const lunes = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow);
+  const nombresDia = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const cortoDia = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+  const hoyISO = today();
+  let html = '';
+  for (let i = 0; i < 7; i++) {
+    const dObj = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + i);
+    const dISO = iso(dObj);
+    const esHoy = dISO === hoyISO;
+    const cust = custodioDe(dISO);
+    // Clases (solo Lun–Vie)
+    const clases = i < 5 ? D().kids.map(k => {
+      const bl = mergeBloques((k.timetable || []).filter(b => b.day === cortoDia[i]));
+      if (!bl.length) return '';
+      return `<div style="font-size:12.5px;margin-top:3px"><b>${esc(k.name)}:</b> ${bl.map(b => `${esc(b.start)} ${esc(b.subject)}`).join(' · ')}</div>`;
+    }).join('') : '';
+    // Evaluaciones y tareas del día
+    const evs = (D().tasks || []).filter(t => t.due === dISO && !t.done);
+    const evHtml = evs.map(t => `<div style="font-size:12.5px;margin-top:3px;color:var(--rose)">📝 ${esc(t.subject || '')}${t.subject ? ': ' : ''}${esc(t.title)}</div>`).join('');
+    // Eventos del calendario
+    const evtos = D().events.filter(e => e.date === dISO);
+    const evtHtml = evtos.map(e => `<div style="font-size:12.5px;margin-top:3px">📅 ${e.time ? esc(e.time) + ' · ' : ''}${esc(e.title)}</div>`).join('');
+    const vacio = !clases && !evHtml && !evtHtml;
+    html += `<div class="card" style="${esHoy ? 'border-color:var(--teal-400);box-shadow:0 0 0 2px var(--teal-100,#ccfbf1)' : ''}">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:800">${nombresDia[i]} ${dObj.getDate()}${esHoy ? ' <span class="badge teal">hoy</span>' : ''}</div>
+        <span class="badge ${cust === 'A' ? 'teal' : 'amber'}">👤 ${esc(nombre(cust))}</span></div>
+      ${clases || ''}${evHtml}${evtHtml}${vacio ? `<div style="font-size:12.5px;color:var(--slate);margin-top:3px">Sin actividades</div>` : ''}</div>`;
+  }
+  openSheet('Agenda de la semana 📅', html);
 }
 function evRow(e) {
   const dias = diffDias(today(), e.date);
@@ -850,6 +927,35 @@ function exportarMensajesPDF() {
   const rows = D().messages.map(m => `<tr><td style="white-space:nowrap">${new Date(m.ts).toLocaleString('es-CL')}</td><td>${esc(nombre(m.from))}</td><td>${esc(m.text || '')}${m.image ? ' [foto adjunta]' : ''}</td></tr>`).join('');
   imprimirReporte('Historial de mensajes', `<table><tr><th>Fecha y hora</th><th>De</th><th>Mensaje</th></tr>${rows}</table>`);
 }
+function exportarTareasPDF() {
+  const tareas = [...(D().tasks || [])].sort((a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')));
+  if (!tareas.length) return toast('No hay tareas para exportar');
+  const rows = tareas.map(t => {
+    const kid = D().kids.find(k => k.id === t.kid);
+    return `<tr><td style="white-space:nowrap">${t.due ? fechaLarga(t.due) : '—'}</td><td>${t.type === 'hogar' ? '🏠 Hogar' : '📚 Colegio'}</td><td>${esc(t.subject || '')}</td><td>${esc(t.title)}${kid ? ' · ' + esc(kid.name) : ''}</td><td>${t.done ? '✓' : ''}</td></tr>`;
+  }).join('');
+  imprimirReporte('Tareas y evaluaciones', `<table><tr><th>Fecha</th><th>Tipo</th><th>Materia</th><th>Detalle</th><th>Hecha</th></tr>${rows}</table>`);
+}
+function exportarColegioPDF(kidId) {
+  const k = D().kids.find(x => x.id === kidId); if (!k) return;
+  const tt = (k.timetable || []);
+  let horario = '';
+  if (tt.length) {
+    const horas = [...new Set(tt.map(p => p.start))].sort();
+    horario = `<h2 style="color:#0f766e;font-size:16px;margin-top:18px">Horario de materias</h2>
+      <table><tr><th></th>${DIAS.map(d => `<th>${d}</th>`).join('')}</tr>
+      ${horas.map(hr => `<tr><td style="white-space:nowrap">${esc(hr)}</td>${DIAS.map(d => { const p = tt.find(x => x.start === hr && x.day === d); return `<td>${p ? esc(p.subject) : ''}</td>`; }).join('')}</tr>`).join('')}</table>`;
+  }
+  const evs = [...(D().tasks || [])].filter(t => t.kid === kidId && t.type !== 'hogar' && t.due).sort((a, b) => a.due.localeCompare(b.due));
+  const evTable = evs.length ? `<h2 style="color:#0f766e;font-size:16px;margin-top:22px">Calendario de evaluaciones</h2>
+    <table><tr><th>Fecha</th><th>Materia</th><th>Contenido</th></tr>
+    ${evs.map(t => `<tr><td style="white-space:nowrap">${fechaLarga(t.due)}</td><td>${esc(t.subject || '')}</td><td>${esc(t.title)}</td></tr>`).join('')}</table>` : '';
+  const profes = (k.teachers && k.teachers.length) ? `<h2 style="color:#0f766e;font-size:16px;margin-top:22px">Profesores</h2>
+    <table><tr><th>Ramo</th><th>Profesor(a)</th><th>Correo</th></tr>
+    ${k.teachers.map(p => `<tr><td>${esc(p.s)}</td><td>${esc(p.n)}</td><td>${esc(p.e)}</td></tr>`).join('')}</table>` : '';
+  if (!horario && !evTable) return toast('Este hijo no tiene horario ni evaluaciones');
+  imprimirReporte(`Colegio · ${k.name}`, `<p class="mut">${esc(k.school || '')}${k.grade ? ' · ' + esc(k.grade) : ''}</p>${horario}${evTable}${profes}`);
+}
 const saldar = (id) => act(async () => { const e = D().expenses.find(x => x.id === id); if (e) { await Store.update('expenses', id, { ...e, settled: true }); render(); toast('Marcado como saldado'); } });
 const saldarTodo = () => act(async () => { for (const e of D().expenses.filter(x => !x.settled)) await Store.update('expenses', e.id, { ...e, settled: true }); render(); toast('Todo saldado ✓'); });
 
@@ -1012,7 +1118,15 @@ function modalHijoVer(id) {
     <dl class="kid-detail">${row('Escuela',k.school)}${row('Grado',k.grade)}${k.schedule ? `<dt>Notas de horario</dt><dd style="white-space:pre-line">${esc(k.schedule)}</dd>` : ''}${row('Alergias',k.allergies)}${row('Medicamentos',k.meds)}${row('Tipo de sangre',k.bloodType)}${row('Médico',k.doctor)}${row('Contacto de emergencia',k.emergency)}${row('Notas',k.notes)}</dl>
     <div style="margin-top:14px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">📚 Horario de materias</div>${horarioGrid(k.timetable)}
       <button class="btn block outline" style="margin-top:8px" onclick="modalHorario('${k.id}')">Editar horario de materias</button>
-      <button class="btn block ghost" style="margin-top:8px" onclick="cargarDatosColegio('${k.id}')">📥 Cargar datos del colegio (6° básico)</button></div>
+      <button class="btn block ghost" style="margin-top:8px" onclick="cargarDatosColegio('${k.id}')">📥 Cargar datos del colegio (6° básico)</button>
+      ${((k.timetable && k.timetable.length) || (D().tasks || []).some(t => t.kid === k.id)) ? `<button class="btn block ghost" style="margin-top:8px" onclick="exportarColegioPDF('${k.id}')">🧾 Exportar horario y evaluaciones (PDF)</button>` : ''}</div>
+    ${k.docPhoto ? `<div style="margin-top:16px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">🖼️ Horario / calendario (foto)</div>
+      <img src="${k.docPhoto}" onclick="verImagenHijoDoc('${k.id}')" style="max-width:100%;border-radius:12px;border:1px solid var(--line);cursor:pointer"></div>` : ''}
+    ${(k.teachers && k.teachers.length) ? `<div style="margin-top:16px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">👩‍🏫 Profesores</div>
+      <div class="card" style="padding:6px 12px">${k.teachers.map(p => `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+        <div style="font-weight:600;font-size:14px">${esc(p.s)}</div>
+        <div style="font-size:13px;color:var(--slate)">${esc(p.n)}</div>
+        <a href="mailto:${esc(p.e)}" style="font-size:13px;color:var(--teal-700);word-break:break-all">${esc(p.e)}</a></div>`).join('')}</div></div>` : ''}
     <div class="row2" style="margin-top:18px"><button class="btn ghost" onclick="modalHijo('${k.id}')">Editar datos</button><button class="btn outline" onclick="delHijo('${k.id}')">Eliminar</button></div>`);
 }
 /* ---- Horario de materias (grilla semanal por hijo) ---- */
@@ -1022,14 +1136,17 @@ function horarioGrid(tt) {
   tt = (tt || []).filter(p => p && p.start);
   if (!tt.length) return `<div class="empty" style="padding:16px 0"><div class="ic">📚</div><p>Sin horario de materias todavía</p></div>`;
   const horas = [...new Set(tt.map(p => p.start))].sort();
+  const hoy = ['', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie'][new Date().getDay()] || '';
   const th = 'padding:6px 4px;font-size:11px;color:var(--slate);text-align:center;font-weight:700';
+  const thHoy = th + ';color:var(--teal-700);background:var(--teal-50,#f0fdfa);border-radius:8px 8px 0 0';
   const td = 'padding:3px;text-align:center;vertical-align:top';
-  let h = `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:340px"><thead><tr><th style="${th}"></th>${DIAS.map(d => `<th style="${th}">${d}</th>`).join('')}</tr></thead><tbody>`;
+  let h = `<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;min-width:340px"><thead><tr><th style="${th}"></th>${DIAS.map(d => `<th style="${d === hoy ? thHoy : th}">${d}${d === hoy ? ' •' : ''}</th>`).join('')}</tr></thead><tbody>`;
   for (const hr of horas) {
     h += `<tr><td style="${td};font-size:11px;color:var(--slate);white-space:nowrap">${esc(hr)}</td>`;
     for (const d of DIAS) {
       const p = tt.find(x => x.start === hr && x.day === d);
-      h += `<td style="${td}">${p ? `<div style="background:${subColor(p.subject)};color:#0f172a;border-radius:8px;padding:5px 4px;font-size:11px;font-weight:600;line-height:1.15">${esc(p.subject)}${p.room ? `<div style="font-weight:400;opacity:.7">${esc(p.room)}</div>` : ''}</div>` : ''}</td>`;
+      const cellBg = d === hoy ? 'background:var(--teal-50,#f0fdfa)' : '';
+      h += `<td style="${td};${cellBg}">${p ? `<div style="background:${subColor(p.subject)};color:#0f172a;border-radius:8px;padding:5px 4px;font-size:11px;font-weight:600;line-height:1.15">${esc(p.subject)}${p.room ? `<div style="font-weight:400;opacity:.7">${esc(p.room)}</div>` : ''}</div>` : ''}</td>`;
     }
     h += `</tr>`;
   }
@@ -1084,16 +1201,15 @@ const COLE_HORARIO = (() => {
   );
 })();
 const COLE_PROFES = [
-  'Profesores 6° básico:',
-  'Lenguaje / Religión: Elsa Díaz — e.diazconquistadores@gmail.com',
-  'Inglés: Francisca Tello — f.telloconquistadores@gmail.com',
-  'Matemáticas / Orientación: Francisca Moroso — f.morosoconquistadores@gmail.com',
-  'Historia y Cs. Sociales: Juan Pablo Castillo — jp.castilloconquistadores@gmail.com',
-  'Cs. Naturales: Magda Aranda — m.arandaconquistadores@gmail.com',
-  'Tecnología / Artes visuales: Mariana Paradela — m.paradelaconquistadores@gmail.com',
-  'Música: Rodrigo Araya — r.arayaconquistadores@gmail.com',
-  'Ed. Física: Jorge Rodríguez — j.rodriguezconquistadores@gmail.com',
-].join('\n');
+  { s: 'Lenguaje / Religión', n: 'Elsa Díaz', e: 'e.diazconquistadores@gmail.com' },
+  { s: 'Inglés', n: 'Francisca Tello', e: 'f.telloconquistadores@gmail.com' },
+  { s: 'Matemáticas / Orientación', n: 'Francisca Moroso', e: 'f.morosoconquistadores@gmail.com' },
+  { s: 'Historia y Cs. Sociales', n: 'Juan Pablo Castillo', e: 'jp.castilloconquistadores@gmail.com' },
+  { s: 'Cs. Naturales', n: 'Magda Aranda', e: 'm.arandaconquistadores@gmail.com' },
+  { s: 'Tecnología / Artes visuales', n: 'Mariana Paradela', e: 'm.paradelaconquistadores@gmail.com' },
+  { s: 'Música', n: 'Rodrigo Araya', e: 'r.arayaconquistadores@gmail.com' },
+  { s: 'Ed. Física', n: 'Jorge Rodríguez', e: 'j.rodriguezconquistadores@gmail.com' },
+];
 const COLE_EVALS = [
   ['2026-08-03','Formativa','Lenguaje','Lectura domiciliaria 30%: “Un secreto en mi colegio”'],
   ['2026-08-04','Sumativa','Artes visuales','Bajorrelieve'],
@@ -1142,8 +1258,9 @@ function cargarDatosColegio(kidId) {
   const seguir = () => act(async () => {
     closeSheet();
     toast('Cargando horario y evaluaciones…');
-    const notas = (k.schedule ? k.schedule + '\n\n' : '') + COLE_PROFES;
-    await Store.update('kids', kidId, { ...k, timetable: COLE_HORARIO, schedule: notas });
+    // Limpia el bloque de profesores que versiones anteriores dejaban en las notas.
+    const notas = String(k.schedule || '').split('Profesores 6° básico:')[0].trim();
+    await Store.update('kids', kidId, { ...k, timetable: COLE_HORARIO, schedule: notas, teachers: COLE_PROFES });
     const tareas = COLE_EVALS.map(([due, tipo, subject, contenido]) => ({
       title: contenido, subject, kid: kidId, due, type: 'colegio',
       note: `${tipo} · 6° básico`, done: false, origen: 'cole2026',
@@ -1173,19 +1290,28 @@ function modalHijo(id) {
       ${id ? `<button type="button" class="btn block outline" style="margin-top:8px" onclick="modalHorario('${id}')">📚 Horario de materias (grilla)</button>` : `<div class="hint" style="margin-top:6px">Guarda primero para agregar el horario de materias en grilla.</div>`}</div>
     <div class="field"><label>Foto (opcional)</label><input id="k-img" type="file" accept="image/*">
       <div id="k-prev" style="margin-top:8px">${k.photo ? `<img src="${k.photo}" style="width:72px;height:72px;object-fit:cover;border-radius:18px">` : ''}</div></div>
+    <div class="field"><label>Foto del horario o calendario (opcional)</label><input id="k-docimg" type="file" accept="image/*">
+      <div class="hint">Sube una foto del horario o del calendario de evaluaciones impreso.</div>
+      <div id="k-docprev" style="margin-top:8px">${k.docPhoto ? `<img src="${k.docPhoto}" style="max-width:100%;border-radius:12px;border:1px solid var(--line)">` : ''}</div></div>
     <div class="field"><label>Notas</label><textarea id="k-notes">${esc(k.notes||'')}</textarea></div>
     <button class="btn block" id="k-save">Guardar</button>`);
   let photoData = k.photo || '';
+  let docData = k.docPhoto || '';
   $('#k-img').onchange = (ev) => act(async () => {
     const f = ev.target.files[0]; if (!f) return;
     photoData = await comprimirImagen(f, 400, 0.7);
     $('#k-prev').innerHTML = `<img src="${photoData}" style="width:72px;height:72px;object-fit:cover;border-radius:18px">`;
   });
+  $('#k-docimg').onchange = (ev) => act(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    docData = await comprimirImagen(f, 1400, 0.75);
+    $('#k-docprev').innerHTML = `<img src="${docData}" style="max-width:100%;border-radius:12px;border:1px solid var(--line)">`;
+  });
   $('#k-save').onclick = () => act(async () => {
     const name = $('#k-name').value.trim(); if (!name) return toast('Escribe el nombre');
     const obj = { name, dob: $('#k-dob').value, bloodType: $('#k-blood').value.trim(), school: $('#k-school').value.trim(), grade: $('#k-grade').value.trim(),
       allergies: $('#k-all').value.trim(), meds: $('#k-meds').value.trim(), doctor: $('#k-doc').value.trim(), emergency: $('#k-em').value.trim(),
-      schedule: $('#k-sched').value.trim(), notes: $('#k-notes').value.trim(), photo: photoData || '' };
+      schedule: $('#k-sched').value.trim(), notes: $('#k-notes').value.trim(), photo: photoData || '', docPhoto: docData || '' };
     if (id) { await Store.update('kids', id, { ...k, ...obj }); }
     else { await Store.create('kids', { ...obj, color: ['#0d9488','#f97316','#2563eb','#e11d48'][D().kids.length % 4] }); }
     closeSheet(); render(); toast('Guardado');
@@ -1203,6 +1329,7 @@ function docRow(d) {
 const verImagenDoc = (id) => { const d = D().docs.find(x => x.id === id); if (d && d.image) verImagen(d.image); };
 const verReciboGasto = (id) => { const e = D().expenses.find(x => x.id === id); if (e && e.receipt) verImagen(e.receipt); };
 const verImagenMensaje = (id) => { const m = D().messages.find(x => x.id === id); if (m && m.image) verImagen(m.image); };
+const verImagenHijoDoc = (id) => { const k = D().kids.find(x => x.id === id); if (k && k.docPhoto) verImagen(k.docPhoto); };
 function modalDoc() {
   openSheet('Registrar documento o boleta', `
     <div class="field"><label>Nombre</label><input id="d-name" placeholder="Ej. Convenio de custodia, boleta colegiatura…"></div>
@@ -1302,9 +1429,28 @@ function viewTareas(app) {
   const chip = (id, l) => `<button class="btn sm ${filtro === id ? '' : 'ghost'}" style="padding:6px 12px" onclick="window.tareaFiltro='${id}';viewTareas(document.getElementById('app'))">${l}</button>`;
   const pend = all.filter(t => !t.done).length;
   const atras = all.filter(t => !t.done && t.due && t.due < hoyISO).length;
+
+  // Límite de "esta semana" (próximos 7 días).
+  const fin7 = new Date(); fin7.setDate(fin7.getDate() + 7); const fin7ISO = iso(fin7);
+  const MES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+  const grupoDe = (t) => {
+    if (t.done) return { k: 'z-hechas', label: '✓ Hechas' };
+    if (!t.due) return { k: 'y-sinfecha', label: 'Sin fecha' };
+    if (t.due < hoyISO) return { k: 'a-atrasadas', label: '⚠️ Atrasadas' };
+    if (t.due <= fin7ISO) return { k: 'b-semana', label: '📌 Esta semana' };
+    const [y, m] = t.due.split('-'); return { k: 'c-' + y + m, label: MES[+m - 1] + ' ' + y };
+  };
+  const grupos = {};
+  for (const t of list) { const g = grupoDe(t); (grupos[g.k] = grupos[g.k] || { label: g.label, items: [] }).items.push(t); }
+  const orden = Object.keys(grupos).sort();
+  const cuerpo = list.length
+    ? orden.map(k => `<div class="section-title">${grupos[k].label} <span class="count">${grupos[k].items.length}</span></div>
+        <div class="card">${grupos[k].items.map(taskRow).join('')}</div>`).join('')
+    : `<div class="card"><div class="empty"><div class="ic">📝</div><p>${all.length ? 'Nada por aquí' : 'Aún no hay tareas'}</p></div></div>`;
+
   app.innerHTML = topbar('Tareas', pend ? `${pend} pendiente${pend > 1 ? 's' : ''}${atras ? ` · ${atras} atrasada${atras > 1 ? 's' : ''}` : ''}` : 'Todo al día') + `<div class="screen">
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${chip('pend', 'Pendientes')}${chip('colegio', '📚 Colegio')}${chip('hogar', '🏠 Hogar')}${chip('todas', 'Todas')}</div>
-    <div class="card">${list.length ? list.map(taskRow).join('') : `<div class="empty"><div class="ic">📝</div><p>${all.length ? 'Nada por aquí' : 'Aún no hay tareas'}</p></div>`}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">${chip('pend', 'Pendientes')}${chip('colegio', '📚 Colegio')}${chip('hogar', '🏠 Hogar')}${chip('todas', 'Todas')}${(D().tasks || []).length ? `<button class="btn sm ghost" style="padding:6px 12px" onclick="exportarTareasPDF()">🧾 PDF</button>` : ''}</div>
+    ${cuerpo}
     </div><button class="fab" onclick="modalTarea()">＋</button>`;
 }
 function taskRow(t) {
@@ -1493,4 +1639,5 @@ Object.assign(window, {
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
   viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel, cargarDatosColegio,
+  exportarTareasPDF, exportarColegioPDF, verImagenHijoDoc, modalAgenda,
 });
