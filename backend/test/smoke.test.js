@@ -137,15 +137,12 @@ try {
   r = await api('GET', '/api/admin/families', null, null, { 'x-admin-key': 'testadmin' });
   ok(r.status === 200 && Array.isArray(r.body.families) && r.body.families.length >= 1, 'admin lista familias');
 
-  // 16. Verificación de correo
+  // 16. Sin servicio de correo (RESEND) configurado: la cuenta queda verificada
+  // automáticamente para poder usar y pagar sin correo.
   r = await api('GET', '/api/state', null, tokenA);
-  ok(r.body.me && r.body.me.verified === false, 'Usuario nuevo empieza sin verificar');
-  const vRow = (await pool.query(`SELECT verify_token FROM users WHERE email='pedro@test.com'`)).rows[0];
-  ok(vRow && vRow.verify_token, 'Registro genera token de verificación');
-  r = await api('POST', '/api/auth/verify', { token: vRow.verify_token });
-  ok(r.status === 200 && r.body.ok, 'Verifica el correo con el token');
-  r = await api('GET', '/api/state', null, tokenA);
-  ok(r.body.me.verified === true, 'El estado queda verificado');
+  ok(r.body.me && r.body.me.verified === true, 'Sin correo configurado, el usuario queda verificado');
+  const vRow = (await pool.query(`SELECT verify_token, email_verified FROM users WHERE email='pedro@test.com'`)).rows[0];
+  ok(vRow && vRow.email_verified === true && !vRow.verify_token, 'No se genera token de verificación cuando no hay correo');
 
   // 17. Bloqueo de groserías en mensajes
   r = await api('POST', '/api/messages', { text: 'eres un idiota' }, tokenB);
@@ -199,6 +196,16 @@ try {
   ok(r.status === 503 && r.body.sinIA, 'OCR evaluaciones responde 503 sin llave de IA');
   r = await api('POST', '/api/ocr/horario', { image: 'data:image/jpeg;base64,xxxx' }, tokenB);
   ok(r.status === 503 && r.body.sinIA, 'OCR horario responde 503 sin llave de IA');
+
+  // 20a-bis. Borrado de familia desde admin: crea una desechable y la elimina por email
+  r = await api('POST', '/api/auth/register', { email: 'temp@test.com', password: 'secreto123', name: 'Temp' });
+  ok(r.status === 200, 'Crea familia desechable');
+  r = await api('POST', '/api/admin/delete-family', { email: 'temp@test.com' }, null, { 'x-admin-key': 'malo' });
+  ok(r.status === 401, 'Admin borrar rechaza clave incorrecta');
+  r = await api('POST', '/api/admin/delete-family', { email: 'temp@test.com' }, null, { 'x-admin-key': 'testadmin' });
+  ok(r.status === 200 && r.body.ok, 'Admin borra la familia por email');
+  r = await api('POST', '/api/auth/login', { email: 'temp@test.com', password: 'secreto123' });
+  ok(r.status === 401, 'La cuenta borrada ya no puede iniciar sesión');
 
   // 20b. Respaldo completo de la base
   r = await api('GET', '/api/admin/backup', null, null, { 'x-admin-key': 'malo' });

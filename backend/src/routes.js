@@ -5,7 +5,7 @@ import webpush from 'web-push';
 import { q, familyState, exportAll } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 import { flowReady, flowPost } from './flow.js';
-import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion, correoRecibo } from './mail.js';
+import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion, correoRecibo, mailReady } from './mail.js';
 
 /* Groserías/insultos que se bloquean en los mensajes (también validado en el cliente). */
 function normGros(s) {
@@ -181,13 +181,18 @@ export function buildRouter(broadcast) {
 
     const userId = uid();
     const vtoken = crypto.randomBytes(24).toString('hex');
-    await q(`INSERT INTO users (id, email, password, name, family_id, role, email_verified, verify_token) VALUES ($1,$2,$3,$4,$5,'A',false,$6)`,
-      [userId, email.toLowerCase(), await hash(password), name, familyId, vtoken]);
+    // Si no hay servicio de correo configurado, la cuenta queda verificada de una vez
+    // (no hay forma de enviar el correo de verificación).
+    const necesitaVerif = mailReady();
+    await q(`INSERT INTO users (id, email, password, name, family_id, role, email_verified, verify_token) VALUES ($1,$2,$3,$4,$5,'A',$6,$7)`,
+      [userId, email.toLowerCase(), await hash(password), name, familyId, !necesitaVerif, necesitaVerif ? vtoken : null]);
 
     const user = { id: userId, email: email.toLowerCase(), family_id: familyId, role: 'A' };
-    const front = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
-    enviarCorreo(user.email, 'Verifica tu correo — Copaz', correoVerificacion(name, `${front}/#/verify?token=${vtoken}`)).catch(() => {});
-    res.json({ token: sign(user), user: { id: userId, name, email: user.email, role: 'A', verified: false }, inviteCode: invite });
+    if (necesitaVerif) {
+      const front = (process.env.FRONTEND_URL || '').replace(/\/+$/, '');
+      enviarCorreo(user.email, 'Verifica tu correo — Copaz', correoVerificacion(name, `${front}/#/verify?token=${vtoken}`)).catch(() => {});
+    }
+    res.json({ token: sign(user), user: { id: userId, name, email: user.email, role: 'A', verified: !necesitaVerif }, inviteCode: invite });
   });
 
   // Verificar correo con el token del enlace.
@@ -341,6 +346,25 @@ export function buildRouter(broadcast) {
     res.json({ families: out });
   });
 
+  // Borrar una familia y todos sus datos desde el panel admin (por email o familyId).
+  r.post('/admin/delete-family', async (req, res) => {
+    const key = req.headers['x-admin-key'] || (req.body && req.body.adminKey);
+    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'No autorizado' });
+    let famId = req.body.familyId;
+    if (!famId && req.body.email) {
+      const u = (await q(`SELECT family_id FROM users WHERE email=$1`, [String(req.body.email).toLowerCase()])).rows[0];
+      famId = u && u.family_id;
+    }
+    if (!famId) return res.status(404).json({ error: 'Familia no encontrada (envía familyId o email)' });
+    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs']) {
+      await q(`DELETE FROM ${t} WHERE family_id=$1`, [famId]).catch(() => {});
+    }
+    await q(`DELETE FROM users WHERE family_id=$1`, [famId]).catch(() => {});
+    await q(`DELETE FROM families WHERE id=$1`, [famId]).catch(() => {});
+    broadcast(famId, { type: 'deleted' });
+    res.json({ ok: true, familyId: famId });
+  });
+
   // Descargar un respaldo completo de la base (JSON). Protegido con ADMIN_KEY.
   r.get('/admin/backup', async (req, res) => {
     const key = req.headers['x-admin-key'] || (req.query && req.query.key);
@@ -371,7 +395,8 @@ export function buildRouter(broadcast) {
     const p = PLANES[plan];
     if (!flowReady()) return res.status(503).json({ error: 'El cobro con Flow aún no está configurado en el servidor.' });
     const u = (await q(`SELECT email, email_verified FROM users WHERE id=$1`, [req.user.uid])).rows[0];
-    if (!u || !u.email_verified) return res.status(403).json({ error: 'Verifica tu correo antes de suscribirte.', necesitaVerificar: true });
+    // Solo exigimos verificación de correo si hay servicio de correo configurado.
+    if (mailReady() && (!u || !u.email_verified)) return res.status(403).json({ error: 'Verifica tu correo antes de suscribirte.', necesitaVerificar: true });
     const order = `COPAZ-${req.user.family_id}-${plan}-${Date.now()}`;
     try {
       const result = await flowPost('/payment/create', {

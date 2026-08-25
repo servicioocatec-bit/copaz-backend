@@ -98,9 +98,20 @@
         +'<td><span class="badge b-'+f.estado+'">'+f.estado+'</span></td>'
         +'<td>'+fmt(f.trialUntil)+'</td><td>'+fmt(f.premiumUntil)+'</td>'
         +'<td><button class="btn sm" onclick="activar(\''+f.id+'\',null,\'mensual\')">+ Mes</button> '
-        +'<button class="btn sm coral" onclick="activar(\''+f.id+'\',null,\'anual\')">+ Año</button></td></tr>';
+        +'<button class="btn sm coral" onclick="activar(\''+f.id+'\',null,\'anual\')">+ Año</button> '
+        +'<button class="btn sm" style="background:#e11d48" onclick="borrarFamilia(\''+f.id+'\',\''+(f.emails||'').replace(/'/g,"")+'\')">Borrar</button></td></tr>';
     }
     h+='</table>'; $('#tabla').innerHTML=h;
+  }
+  async function borrarFamilia(familyId, emails){
+    if(!key()){ alert('Ingresa la clave de administrador'); return; }
+    if(!confirm('¿Borrar definitivamente esta cuenta y TODOS sus datos?\n'+(emails||'')+'\n\nEsta acción no se puede deshacer.')) return;
+    try{
+      const r=await fetch(base()+'/api/admin/delete-family',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key()},body:JSON.stringify({familyId})});
+      const b=await r.json();
+      if(!r.ok){ alert('Error: '+(b.error||r.status)); return; }
+      $('#msg').textContent='Cuenta eliminada.'; cargar();
+    }catch(e){ alert('Error de red: '+e.message); }
   }
   async function descargarRespaldo(){
     if(!key()){ alert('Ingresa la clave de administrador'); return; }
