@@ -496,7 +496,8 @@ export function buildRouter(broadcast) {
   const IA_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
   const IA_MODELOS = [
     (process.env.OCR_MODEL || '').trim(),
-    'claude-3-5-sonnet-latest', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620', 'claude-3-haiku-20240307',
+    'claude-sonnet-5', 'claude-haiku-4-5-20251001', 'claude-opus-5',
+    'claude-3-5-sonnet-latest', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307',
   ].filter(Boolean);
   // Llama a la IA de visión probando modelos hasta que uno funcione.
   async function iaVision(media, b64, prompt) {
