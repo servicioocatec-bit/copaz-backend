@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">
+<title>Copaz — Administración</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,Arial,sans-serif;color:#0f172a;background:#f7f9fb}
+  header{background:linear-gradient(135deg,#0d9488,#115e59);color:#fff;padding:18px 20px;font-weight:800;font-size:19px}
+  .wrap{max-width:960px;margin:0 auto;padding:22px 16px 60px}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;box-shadow:0 2px 12px rgba(15,23,42,.05);margin-bottom:16px}
+  label{display:block;font-size:13px;font-weight:600;color:#475569;margin-bottom:5px}
+  input{width:100%;padding:11px 12px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:15px;margin-bottom:12px}
+  .btn{background:#0d9488;color:#fff;font-weight:700;border:0;border-radius:10px;padding:11px 16px;cursor:pointer}
+  .btn.sm{padding:7px 11px;font-size:13px}
+  .btn.coral{background:#f97316}.btn.gray{background:#64748b}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #eef2f6;vertical-align:middle}
+  th{color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .badge{font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px}
+  .b-premium{background:#dcfce7;color:#15803d}.b-prueba{background:#e0f2fe;color:#0369a1}.b-bloqueado{background:#ffe4e6;color:#be123c}
+  .row2{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+  .mut{color:#94a3b8;font-size:12.5px}
+  #msg{font-size:14px;margin:8px 0;color:#0f766e}
+</style></head>
+<body>
+<header>🕊️ Copaz · Panel de administración</header>
+<div class="wrap">
+
+  <div class="card">
+    <label>URL del backend</label>
+    <input id="base" value="https://copaz-backend-production.up.railway.app">
+    <label>Clave de administrador (ADMIN_KEY)</label>
+    <input id="key" type="password" placeholder="tu ADMIN_KEY">
+    <button class="btn" onclick="cargar()">Cargar familias</button>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:10px">Activar Premium por correo</div>
+    <div class="row2">
+      <div style="flex:1;min-width:200px"><label>Correo del cliente</label><input id="actEmail" placeholder="cliente@correo.com" style="margin:0"></div>
+      <button class="btn sm" onclick="activar(null, document.getElementById('actEmail').value, 'mensual')">+ Mensual</button>
+      <button class="btn sm coral" onclick="activar(null, document.getElementById('actEmail').value, 'anual')">+ Anual</button>
+    </div>
+    <div class="mut" style="margin-top:8px">Úsalo cuando veas un pago en tu panel de Flow y quieras activar esa cuenta.</div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">Familias</div>
+    <div id="tabla"><span class="mut">Ingresa tu clave y pulsa "Cargar familias".</span></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div style="font-weight:700">Pagos (para boletas)</div>
+      <button class="btn sm gray" onclick="cargarPagos()">Cargar pagos</button></div>
+    <div id="pagos"><span class="mut">Pulsa "Cargar pagos" para ver las ventas.</span></div>
+  </div>
+
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:6px">Respaldo de la base</div>
+    <div class="mut" style="margin-bottom:8px">Descarga una copia completa (JSON) de todos los datos. Guárdala en un lugar seguro.</div>
+    <button class="btn gray" onclick="descargarRespaldo()">⬇️ Descargar respaldo</button>
+    <div class="mut" style="margin-top:8px">El respaldo también se envía solo por correo cada día si configuras <b>BACKUP_EMAIL</b> en el servidor.</div>
+  </div>
+
+  <div style="text-align:center;margin-top:6px">
+    <span class="mut">Copaz Admin v25</span>
+    <button class="btn sm gray" style="margin-left:8px" onclick="location.reload()">🔄 Actualizar panel</button>
+  </div>
+</div>
+
+<script>
+  const $=s=>document.querySelector(s);
+  const base=()=>$('#base').value.replace(/\/+$/,'');
+  const key=()=>$('#key').value.trim();
+  const fmt=d=>d?new Date(d).toLocaleDateString('es-CL'):'—';
+  document.addEventListener('DOMContentLoaded',()=>{ const k=localStorage.getItem('copaz.adminkey'); if(k)$('#key').value=k; });
+
+  async function cargar(){
+    localStorage.setItem('copaz.adminkey',key());
+    $('#msg').textContent='Cargando…';
+    try{
+      const r=await fetch(base()+'/api/admin/families',{headers:{'x-admin-key':key()}});
+      const b=await r.json();
+      if(!r.ok){ $('#msg').textContent='Error: '+(b.error||r.status); return; }
+      render(b.families||[]); $('#msg').textContent=(b.families||[]).length+' familias.';
+    }catch(e){ $('#msg').textContent='Error de red: '+e.message; }
+  }
+  function render(fams){
+    if(!fams.length){ $('#tabla').innerHTML='<span class="mut">Sin familias todavía.</span>'; return; }
+    let h='<table><tr><th>Correos</th><th>Estado</th><th>Prueba hasta</th><th>Premium hasta</th><th>Acciones</th></tr>';
+    for(const f of fams){
+      h+='<tr><td>'+(f.emails||'—')+'<div class="mut">'+f.miembros+' miembro(s)</div></td>'
+        +'<td><span class="badge b-'+f.estado+'">'+f.estado+'</span></td>'
+        +'<td>'+fmt(f.trialUntil)+'</td><td>'+fmt(f.premiumUntil)+'</td>'
+        +'<td><button class="btn sm" onclick="activar(\''+f.id+'\',null,\'mensual\')">+ Mes</button> '
+        +'<button class="btn sm coral" onclick="activar(\''+f.id+'\',null,\'anual\')">+ Año</button></td></tr>';
+    }
+    h+='</table>'; $('#tabla').innerHTML=h;
+  }
+  async function descargarRespaldo(){
+    if(!key()){ alert('Ingresa la clave de administrador'); return; }
+    try{
+      const r=await fetch(base()+'/api/admin/backup',{headers:{'x-admin-key':key()}});
+      if(!r.ok){ const b=await r.json().catch(()=>({})); alert('Error: '+(b.error||r.status)); return; }
+      const blob=await r.blob();
+      const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+      a.download='copaz-respaldo-'+new Date().toISOString().slice(0,10)+'.json'; a.click();
+      URL.revokeObjectURL(a.href);
+    }catch(e){ alert('Error de red: '+e.message); }
+  }
+  async function cargarPagos(){
+    if(!key()){ alert('Ingresa la clave de administrador'); return; }
+    $('#pagos').innerHTML='<span class="mut">Cargando…</span>';
+    try{
+      const r=await fetch(base()+'/api/admin/payments',{headers:{'x-admin-key':key()}});
+      const b=await r.json();
+      if(!r.ok){ $('#pagos').innerHTML='<span class="mut">Error: '+(b.error||r.status)+'</span>'; return; }
+      const ps=b.payments||[];
+      if(!ps.length){ $('#pagos').innerHTML='<span class="mut">Sin pagos todavía.</span>'; return; }
+      let h='<table><tr><th>Fecha</th><th>Correo</th><th>Plan</th><th>Monto</th><th>Estado</th><th>Orden</th></tr>';
+      for(const p of ps){
+        h+='<tr><td>'+(p.fecha?new Date(p.fecha).toLocaleDateString('es-CL'):'—')+'</td><td>'+(p.emails||'—')+'</td><td>'+p.plan+'</td>'
+          +'<td>$'+Number(p.amount).toLocaleString('es-CL')+'</td>'
+          +'<td><span class="badge '+(p.status==='paid'?'b-premium':'b-prueba')+'">'+p.status+'</span></td>'
+          +'<td style="font-size:11px">'+p.order+'</td></tr>';
+      }
+      h+='</table>'; $('#pagos').innerHTML=h;
+    }catch(e){ $('#pagos').innerHTML='<span class="mut">Error de red: '+e.message+'</span>'; }
+  }
+  async function activar(familyId,email,plan){
+    if(!key()){ alert('Ingresa la clave de administrador'); return; }
+    if(!familyId && !email){ alert('Escribe un correo'); return; }
+    try{
+      const r=await fetch(base()+'/api/admin/activate',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key()},body:JSON.stringify({familyId,email,plan})});
+      const b=await r.json();
+      if(!r.ok){ alert('Error: '+(b.error||r.status)); return; }
+      $('#msg').textContent='Premium '+plan+' activado hasta '+fmt(b.premiumUntil);
+      cargar();
+    }catch(e){ alert('Error de red: '+e.message); }
+  }
+</script>
+</body></html>

@@ -1,12 +1,19 @@
 /* Servidor Copaz — Express + WebSocket. */
 import 'dotenv/config';
 import http from 'http';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { initPool, migrate } from './db.js';
 import { verify } from './auth.js';
 import { buildRouter, startReminders, startBackups } from './routes.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Carpeta con la app (frontend). Se sirve desde el mismo servidor: una sola URL.
+const PUBLIC_DIR = path.join(__dirname, '../public');
 
 /* ---- WebSocket: agrupamos conexiones por familia para difundir cambios ---- */
 const rooms = new Map(); // familyId -> Set<ws>
@@ -23,9 +30,21 @@ export function createApp() {
   app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
   app.use(express.json({ limit: '6mb' })); // permite adjuntar fotos (boletas/documentos) comprimidas
 
-  app.get('/', (_req, res) => res.json({ app: 'Copaz API', status: 'ok' }));
   app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
   app.use('/api', buildRouter(broadcast));
+
+  // Sirve la app (frontend) desde el mismo servidor, si está la carpeta public.
+  const tieneFront = fs.existsSync(path.join(PUBLIC_DIR, 'index.html'));
+  if (tieneFront) {
+    app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
+    // Cualquier otra ruta (no /api ni /ws) devuelve la app.
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+      res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+    });
+  } else {
+    app.get('/', (_req, res) => res.json({ app: 'Copaz API', status: 'ok' }));
+  }
 
   // Manejo de errores centralizado
   app.use((err, _req, res, _next) => {
