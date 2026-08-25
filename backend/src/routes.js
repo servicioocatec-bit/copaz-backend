@@ -491,78 +491,76 @@ export function buildRouter(broadcast) {
     res.json({ ok: true });
   });
 
-  /* -------- Leer foto del calendario con IA (visión) -------- */
-  // Extrae evaluaciones desde una foto. Requiere ANTHROPIC_API_KEY.
+  /* -------- Leer foto del calendario/horario con IA (visión) -------- */
+  // Requiere ANTHROPIC_API_KEY. Prueba varios modelos por si uno no está disponible.
   const IA_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
-  const IA_MODEL = (process.env.OCR_MODEL || 'claude-3-5-sonnet-latest').trim();
+  const IA_MODELOS = [
+    (process.env.OCR_MODEL || '').trim(),
+    'claude-3-5-sonnet-latest', 'claude-3-5-sonnet-20241022', 'claude-3-5-sonnet-20240620', 'claude-3-haiku-20240307',
+  ].filter(Boolean);
+  // Llama a la IA de visión probando modelos hasta que uno funcione.
+  async function iaVision(media, b64, prompt) {
+    let ultimo = 'no disponible';
+    for (const model of IA_MODELOS) {
+      try {
+        const r2 = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': IA_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model, max_tokens: 4000,
+            messages: [{ role: 'user', content: [
+              { type: 'image', source: { type: 'base64', media_type: media, data: b64 } },
+              { type: 'text', text: prompt },
+            ] }],
+          }),
+        });
+        const data = await r2.json();
+        if (r2.ok) return { ok: true, text: (data.content && data.content[0] && data.content[0].text) || '[]' };
+        ultimo = (data.error && data.error.message) || ('estado ' + r2.status);
+        // Si el error es del modelo, prueba el siguiente; si es de la llave, corta.
+        if (/api[-_ ]?key|authentication|credit|billing/i.test(ultimo)) break;
+      } catch (e) { ultimo = e.message; }
+    }
+    return { ok: false, error: ultimo };
+  }
+  const extraerJson = (txt) => {
+    txt = String(txt || '').replace(/```json/gi, '').replace(/```/g, '').trim();
+    const ini = txt.indexOf('['), fin = txt.lastIndexOf(']');
+    if (ini >= 0 && fin >= 0) txt = txt.slice(ini, fin + 1);
+    try { return JSON.parse(txt); } catch { return null; }
+  };
+
   r.post('/ocr/evaluaciones', requireAuth, async (req, res) => {
     if (!IA_KEY) return res.status(503).json({ error: 'La lectura por foto no está configurada en el servidor.', sinIA: true });
-    const img = String(req.body.image || '');
-    const m = img.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
+    const m = String(req.body.image || '').match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
     if (!m) return res.status(400).json({ error: 'Imagen no válida' });
     const anio = new Date().getFullYear();
-    const prompt = `Esta imagen es un calendario escolar de evaluaciones (pruebas/tareas). Extrae TODAS las filas como un arreglo JSON. Cada elemento debe ser: {"due":"YYYY-MM-DD","tipo":"Sumativa|Formativa|Otro","subject":"asignatura","contenido":"tema o descripción"}. Usa el año ${anio} si la fila no indica año. Ordena por fecha. Responde ÚNICAMENTE con el arreglo JSON, sin texto adicional ni explicaciones.`;
-    try {
-      const r2 = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': IA_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: IA_MODEL, max_tokens: 4000,
-          messages: [{ role: 'user', content: [
-            { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
-            { type: 'text', text: prompt },
-          ] }],
-        }),
-      });
-      const data = await r2.json();
-      if (!r2.ok) return res.status(502).json({ error: 'La IA no pudo procesar la imagen', detalle: data.error && data.error.message });
-      let txt = (data.content && data.content[0] && data.content[0].text) || '[]';
-      txt = txt.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const ini = txt.indexOf('['), fin = txt.lastIndexOf(']');
-      if (ini >= 0 && fin >= 0) txt = txt.slice(ini, fin + 1);
-      let arr = [];
-      try { arr = JSON.parse(txt); } catch { return res.status(502).json({ error: 'No se pudo leer el calendario. Prueba con una foto más nítida.' }); }
-      const evals = (Array.isArray(arr) ? arr : []).filter(e => e && /^\d{4}-\d{2}-\d{2}$/.test(e.due))
-        .map(e => ({ due: e.due, tipo: String(e.tipo || 'Sumativa').slice(0, 20), subject: String(e.subject || '').slice(0, 60), contenido: String(e.contenido || '').slice(0, 200) }));
-      res.json({ evaluaciones: evals });
-    } catch (e) { res.status(500).json({ error: 'Error procesando la imagen: ' + e.message }); }
+    const prompt = `Esta imagen es un calendario escolar de evaluaciones (pruebas/tareas). Extrae TODAS las filas como un arreglo JSON. Cada elemento: {"due":"YYYY-MM-DD","tipo":"Sumativa|Formativa|Otro","subject":"asignatura","contenido":"tema"}. Usa el año ${anio} si la fila no indica año. Responde ÚNICAMENTE con el arreglo JSON.`;
+    const out = await iaVision(m[1], m[2], prompt);
+    if (!out.ok) return res.status(502).json({ error: 'IA: ' + out.error });
+    const arr = extraerJson(out.text);
+    if (!arr) return res.status(502).json({ error: 'No se pudo leer el calendario. Prueba con una foto más nítida.' });
+    const evals = (Array.isArray(arr) ? arr : []).filter(e => e && /^\d{4}-\d{2}-\d{2}$/.test(e.due))
+      .map(e => ({ due: e.due, tipo: String(e.tipo || 'Sumativa').slice(0, 20), subject: String(e.subject || '').slice(0, 60), contenido: String(e.contenido || '').slice(0, 200) }));
+    res.json({ evaluaciones: evals });
   });
 
-  // Extrae el horario semanal de materias desde una foto.
   r.post('/ocr/horario', requireAuth, async (req, res) => {
     if (!IA_KEY) return res.status(503).json({ error: 'La lectura por foto no está configurada en el servidor.', sinIA: true });
-    const img = String(req.body.image || '');
-    const m = img.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
+    const m = String(req.body.image || '').match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
     if (!m) return res.status(400).json({ error: 'Imagen no válida' });
-    const prompt = `Esta imagen es un horario escolar semanal (materias por día y hora). Extrae cada bloque de clase como un arreglo JSON. Cada elemento: {"day":"Lun|Mar|Mié|Jue|Vie","start":"HH:MM","end":"HH:MM","subject":"materia","room":""}. Usa horas en formato 24h. Ignora recreos y almuerzos. Responde ÚNICAMENTE con el arreglo JSON, sin texto adicional.`;
-    try {
-      const r2 = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': IA_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: IA_MODEL, max_tokens: 4000,
-          messages: [{ role: 'user', content: [
-            { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } },
-            { type: 'text', text: prompt },
-          ] }],
-        }),
-      });
-      const data = await r2.json();
-      if (!r2.ok) return res.status(502).json({ error: 'La IA no pudo procesar la imagen', detalle: data.error && data.error.message });
-      let txt = (data.content && data.content[0] && data.content[0].text) || '[]';
-      txt = txt.replace(/```json/gi, '').replace(/```/g, '').trim();
-      const ini = txt.indexOf('['), fin = txt.lastIndexOf(']');
-      if (ini >= 0 && fin >= 0) txt = txt.slice(ini, fin + 1);
-      let arr = [];
-      try { arr = JSON.parse(txt); } catch { return res.status(502).json({ error: 'No se pudo leer el horario. Prueba con una foto más nítida.' }); }
-      const dias = { lun: 'Lun', mar: 'Mar', mié: 'Mié', mie: 'Mié', jue: 'Jue', vie: 'Vie' };
-      const horario = (Array.isArray(arr) ? arr : []).map(b => {
-        const d = dias[String(b.day || '').toLowerCase().slice(0, 3)] || null;
-        const start = /^\d{1,2}:\d{2}$/.test(b.start || '') ? b.start : null;
-        return d && start ? { day: d, start, end: /^\d{1,2}:\d{2}$/.test(b.end || '') ? b.end : '', subject: String(b.subject || '').slice(0, 40), room: String(b.room || '').slice(0, 20) } : null;
-      }).filter(Boolean);
-      res.json({ horario });
-    } catch (e) { res.status(500).json({ error: 'Error procesando la imagen: ' + e.message }); }
+    const prompt = `Esta imagen es un horario escolar semanal (materias por día y hora). Extrae cada bloque como arreglo JSON: {"day":"Lun|Mar|Mié|Jue|Vie","start":"HH:MM","end":"HH:MM","subject":"materia","room":""}. Horas en 24h. Ignora recreos y almuerzos. Responde ÚNICAMENTE con el arreglo JSON.`;
+    const out = await iaVision(m[1], m[2], prompt);
+    if (!out.ok) return res.status(502).json({ error: 'IA: ' + out.error });
+    const arr = extraerJson(out.text);
+    if (!arr) return res.status(502).json({ error: 'No se pudo leer el horario. Prueba con una foto más nítida.' });
+    const dias = { lun: 'Lun', mar: 'Mar', mié: 'Mié', mie: 'Mié', jue: 'Jue', vie: 'Vie' };
+    const horario = (Array.isArray(arr) ? arr : []).map(b => {
+      const d = dias[String(b.day || '').toLowerCase().slice(0, 3)] || null;
+      const start = /^\d{1,2}:\d{2}$/.test(b.start || '') ? b.start : null;
+      return d && start ? { day: d, start, end: /^\d{1,2}:\d{2}$/.test(b.end || '') ? b.end : '', subject: String(b.subject || '').slice(0, 40), room: String(b.room || '').slice(0, 20) } : null;
+    }).filter(Boolean);
+    res.json({ horario });
   });
 
   /* ----------------------------- MENSAJES --------------------------- */
