@@ -187,6 +187,24 @@ try {
   r = await api('GET', '/api/state', null, tokenA);
   ok(r.body.tasks.length === 2, 'A ve ambas tareas');
 
+  // 19b. Nuevas entidades: excepciones, recurrentes, acuerdos, lista
+  r = await api('POST', '/api/overrides', { start: '2026-09-18', end: '2026-09-19', who: 'A', note: 'Fiestas Patrias' }, tokenA);
+  ok(r.status === 200 && r.body.id, 'Crea excepción de custodia (feriado)');
+  r = await api('POST', '/api/recurring', { title: 'Colegiatura', amount: 120000, dia: 5, payer: 'A', split: 50, cat: 'Educación' }, tokenA);
+  ok(r.status === 200 && r.body.id, 'Crea gasto recurrente');
+  r = await api('POST', '/api/agreements', { title: 'Vacaciones', text: 'Se dividen en partes iguales', by: 'A', aceptaA: true, aceptaB: false }, tokenA);
+  ok(r.status === 200 && r.body.id, 'Crea acuerdo de coparentalidad');
+  r = await api('POST', '/api/shopping', { text: 'Zapatillas', done: false }, tokenB);
+  ok(r.status === 200 && r.body.id, 'Agrega ítem a la lista de necesidades');
+  r = await api('GET', '/api/state', null, tokenB);
+  ok(r.body.overrides.length === 1 && r.body.recurring.length === 1 && r.body.agreements.length === 1 && r.body.shopping.length === 1, 'Las nuevas entidades se sincronizan');
+
+  // 19c. Recordatorios configurables
+  r = await api('PATCH', '/api/family', { reminderDays: 3 }, tokenA);
+  ok(r.status === 200, 'Actualiza días de aviso de recordatorio');
+  r = await api('GET', '/api/state', null, tokenB);
+  ok(r.body.family.reminderDays === 3, 'reminderDays queda en 3 y sincroniza');
+
   // 20. Panel admin: lista de pagos
   r = await api('GET', '/api/admin/payments', null, null, { 'x-admin-key': 'testadmin' });
   ok(r.status === 200 && Array.isArray(r.body.payments), 'Admin lista pagos');

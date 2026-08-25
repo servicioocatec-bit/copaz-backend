@@ -78,6 +78,15 @@ function custodioCalc(sched, isoStr) {
   return n % 2 === 0 ? first : second;
 }
 
+/* Igual que custodioCalc pero respeta las excepciones (feriados/vacaciones). */
+function custodioCon(sched, overrides, isoStr) {
+  for (const o of (overrides || [])) {
+    const ini = o.start || o.date, fin = o.end || o.start || o.date;
+    if (ini && fin && isoStr >= ini && isoStr <= fin && (o.who === 'A' || o.who === 'B')) return o.who;
+  }
+  return custodioCalc(sched, isoStr);
+}
+
 /* Recordatorios automáticos: eventos próximos y cambios de custodia (push a ambos padres). */
 export function startReminders() {
   const pad = n => String(n).padStart(2, '0');
@@ -88,26 +97,47 @@ export function startReminders() {
       const now = new Date();
       const hoy = iso(now);
       const manana = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
-      const fams = (await q(`SELECT id, parents, schedule, last_custody_reminder FROM families`)).rows;
+      const dentroDe = (fecha, dias) => { // ¿la fecha cae entre hoy y hoy+dias?
+        if (!fecha) return false;
+        return fecha >= hoy && fecha <= iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + Math.max(0, dias)));
+      };
+      const cuando = (fecha) => fecha === hoy ? 'hoy' : (fecha === manana ? 'mañana' : 'el ' + fecha);
+      const fams = (await q(`SELECT id, parents, schedule, last_custody_reminder, reminder_days FROM families`)).rows;
       for (const f of fams) {
+        const dias = f.reminder_days == null ? 1 : f.reminder_days;
+        const overrides = (await q(`SELECT data FROM overrides WHERE family_id=$1`, [f.id])).rows.map(r => r.data);
         const evs = (await q(`SELECT id, data FROM events WHERE family_id=$1`, [f.id])).rows;
         for (const row of evs) {
           const e = row.data; if (!e || e.reminded || !e.date) continue;
-          if (e.date === hoy || e.date === manana) {
-            sendPush(f.id, null, { title: 'Recordatorio', body: `${e.title || 'Evento'}${e.time ? ' · ' + e.time : ''} (${e.date === hoy ? 'hoy' : 'mañana'})`, url: './#/calendario', tag: 'recordatorio' }).catch(() => {});
+          if (dentroDe(e.date, dias)) {
+            sendPush(f.id, null, { title: 'Recordatorio', body: `${e.title || 'Evento'}${e.time ? ' · ' + e.time : ''} (${cuando(e.date)})`, url: './#/calendario', tag: 'recordatorio' }).catch(() => {});
             await q(`UPDATE events SET data=$1 WHERE id=$2`, [JSON.stringify({ ...e, reminded: true }), row.id]);
           }
         }
         const tks = (await q(`SELECT id, data FROM tasks WHERE family_id=$1`, [f.id])).rows;
         for (const row of tks) {
           const tk = row.data; if (!tk || tk.reminded || tk.done || !tk.due) continue;
-          if (tk.due === hoy || tk.due === manana) {
-            sendPush(f.id, null, { title: 'Tarea por entregar', body: `${tk.title || 'Tarea'}${tk.subject ? ' · ' + tk.subject : ''} (${tk.due === hoy ? 'hoy' : 'mañana'})`, url: './#/tareas', tag: 'tarea' }).catch(() => {});
+          if (dentroDe(tk.due, dias)) {
+            sendPush(f.id, null, { title: 'Tarea por entregar', body: `${tk.title || 'Tarea'}${tk.subject ? ' · ' + tk.subject : ''} (${cuando(tk.due)})`, url: './#/tareas', tag: 'tarea' }).catch(() => {});
             await q(`UPDATE tasks SET data=$1 WHERE id=$2`, [JSON.stringify({ ...tk, reminded: true }), row.id]);
           }
         }
-        if (custodioCalc(f.schedule, hoy) !== custodioCalc(f.schedule, manana) && f.last_custody_reminder !== hoy) {
-          const who = custodioCalc(f.schedule, manana);
+        // Gastos recurrentes: genera el gasto del mes si corresponde.
+        const mesAct = hoy.slice(0, 7);
+        const recs = (await q(`SELECT id, data FROM recurring WHERE family_id=$1`, [f.id])).rows;
+        for (const row of recs) {
+          const rc = row.data; if (!rc || !rc.amount) continue;
+          const diaMes = Math.max(1, Math.min(28, parseInt(rc.dia, 10) || 1));
+          if (rc.lastMonth !== mesAct && now.getDate() >= diaMes) {
+            const gid = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const gasto = { title: rc.title || 'Gasto', amount: rc.amount, date: `${mesAct}-${String(diaMes).padStart(2, '0')}`, payer: rc.payer || 'A', split: rc.split == null ? 50 : rc.split, cat: rc.cat || 'Otro', kid: rc.kid || '', settled: false, recurrenteId: row.id };
+            await q(`INSERT INTO expenses (id, family_id, data) VALUES ($1,$2,$3)`, [gid, f.id, JSON.stringify(gasto)]).catch(() => {});
+            await q(`UPDATE recurring SET data=$1 WHERE id=$2`, [JSON.stringify({ ...rc, lastMonth: mesAct }), row.id]);
+            sendPush(f.id, null, { title: 'Gasto recurrente', body: `Se agregó: ${gasto.title} (${mesAct})`, url: './#/gastos', tag: 'gasto' }).catch(() => {});
+          }
+        }
+        if (custodioCon(f.schedule, overrides, hoy) !== custodioCon(f.schedule, overrides, manana) && f.last_custody_reminder !== hoy) {
+          const who = custodioCon(f.schedule, overrides, manana);
           sendPush(f.id, null, { title: 'Cambio de custodia', body: `Mañana los niños pasan con ${(f.parents || {})[who] || who}`, url: './#/inicio', tag: 'custodia' }).catch(() => {});
           await q(`UPDATE families SET last_custody_reminder=$1 WHERE id=$2`, [hoy, f.id]);
         }
@@ -461,14 +491,16 @@ export function buildRouter(broadcast) {
   r.get('/pay/return', handleReturn);
   r.post('/pay/return', handleReturn);
 
-  // Ajustes de familia (moneda, esquema de custodia, nombres).
+  // Ajustes de familia (moneda, esquema de custodia, nombres, días de recordatorio).
   r.patch('/family', requireAuth, async (req, res) => {
-    const { currency, schedule, parents } = req.body || {};
+    const { currency, schedule, parents, reminderDays } = req.body || {};
     const cur = (await q(`SELECT * FROM families WHERE id=$1`, [req.user.family_id])).rows[0];
-    await q(`UPDATE families SET currency=$1, schedule=$2, parents=$3 WHERE id=$4`, [
+    const rd = reminderDays == null ? (cur.reminder_days == null ? 1 : cur.reminder_days) : Math.max(0, Math.min(7, parseInt(reminderDays, 10) || 0));
+    await q(`UPDATE families SET currency=$1, schedule=$2, parents=$3, reminder_days=$4 WHERE id=$5`, [
       currency ?? cur.currency,
       JSON.stringify(schedule ?? cur.schedule),
       JSON.stringify(parents ?? cur.parents),
+      rd,
       req.user.family_id,
     ]);
     broadcast(req.user.family_id, { type: 'sync' });
@@ -583,7 +615,7 @@ export function buildRouter(broadcast) {
   });
 
   /* --------------------- CRUD genérico por entidad ------------------ */
-  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks'];
+  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping'];
   const guard = (t, res) => { if (!ENTITIES.includes(t)) { res.status(404).json({ error: 'Entidad no válida' }); return false; } return true; };
 
   // Crear
@@ -659,11 +691,16 @@ export function buildRouter(broadcast) {
     const fam = (await q(`SELECT * FROM families WHERE id=$1`, [req.params.familyId])).rows[0];
     if (!fam || !fam.cal_token || fam.cal_token !== req.params.token) return res.status(404).send('No encontrado');
     const evs = (await q(`SELECT data FROM events WHERE family_id=$1`, [req.params.familyId])).rows.map(r => r.data);
+    const overrides = (await q(`SELECT data FROM overrides WHERE family_id=$1`, [req.params.familyId])).rows.map(r => r.data);
     const pad = n => String(n).padStart(2, '0');
     const fmt = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
     const parents = fam.parents || {};
     const sched = fam.schedule || { type: 'semanal', start: null, startParent: 'A' };
     const custodioDe = (isoStr) => {
+      for (const o of overrides) {
+        const ini = o.start || o.date, fin = o.end || o.start || o.date;
+        if (ini && fin && isoStr >= ini && isoStr <= fin && (o.who === 'A' || o.who === 'B')) return o.who;
+      }
       const start = sched.start || isoStr;
       const n = Math.round((new Date(isoStr + 'T00:00') - new Date(start + 'T00:00')) / 86400000);
       if (n < 0) return sched.startParent;

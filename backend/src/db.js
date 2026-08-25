@@ -59,6 +59,11 @@ export async function migrate() {
   await entity('journal',  `data JSONB NOT NULL`);   // bitácora / diario de los hijos
   await entity('settlements', `data JSONB NOT NULL`);// reembolsos / abonos entre padres
   await entity('tasks',    `data JSONB NOT NULL`);   // tareas del colegio / quehaceres del hogar
+  await entity('overrides', `data JSONB NOT NULL`);  // excepciones de custodia (feriados/vacaciones)
+  await entity('recurring', `data JSONB NOT NULL`);  // gastos recurrentes (plantillas mensuales)
+  await entity('agreements',`data JSONB NOT NULL`);  // acuerdos de coparentalidad (confirman ambos)
+  await entity('shopping',  `data JSONB NOT NULL`);  // lista compartida de necesidades de los niños
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS reminder_days INTEGER DEFAULT 1;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS cal_token TEXT;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS last_custody_reminder TEXT;`);
   await q(`
@@ -158,6 +163,7 @@ export async function familyState(familyId) {
     family: {
       id: fam.id, inviteCode: fam.invite_code, currency: fam.currency,
       schedule: fam.schedule, parents: fam.parents,
+      reminderDays: fam.reminder_days == null ? 1 : fam.reminder_days,
       premium: { until: fam.premium_until || null, plan: fam.premium_plan || null },
       calToken: fam.cal_token || null,
       access: {
@@ -174,6 +180,10 @@ export async function familyState(familyId) {
     journal:  await load('journal'),
     settlements: await load('settlements'),
     tasks:    await load('tasks'),
+    overrides: await load('overrides'),
+    recurring: await load('recurring'),
+    agreements: await load('agreements'),
+    shopping: await load('shopping'),
     messages,
   };
 }

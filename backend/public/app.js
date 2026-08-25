@@ -191,6 +191,12 @@ function seedDemo(s) {
 /* ---------------------- Motor de rotación de custodia ------------------- */
 /* Un intercambio aceptado tiene prioridad sobre el esquema para ese día. */
 function overrideDe(isoStr) {
+  // 1) Excepciones (feriados/vacaciones) tienen prioridad.
+  for (const o of (D().overrides || [])) {
+    const ini = o.start || o.date, fin = o.end || o.start || o.date;
+    if (ini && fin && isoStr >= ini && isoStr <= fin && (o.who === 'A' || o.who === 'B')) return o.who;
+  }
+  // 2) Intercambios de día aceptados.
   const list = (D().swaps || []).filter(x => x.status === 'accepted' && x.date === isoStr);
   return list.length ? list[list.length - 1].to : null;
 }
@@ -261,6 +267,8 @@ function render() {
   const r = currentRoute();
   const app = $('#app'); app.innerHTML = '';
   ({ inicio: viewInicio, calendario: viewCalendario, gastos: viewGastos, mensajes: viewMensajes, hijos: viewHijos, tareas: viewTareas }[r])(app);
+  // Guía de bienvenida la primera vez (una sola vez por dispositivo).
+  if (!window._tourShown && !localStorage.getItem('copaz.tourDone')) { window._tourShown = true; setTimeout(() => mostrarTour(), 700); }
 }
 function renderLoading() { $('#app').innerHTML = `<div class="ob"><div class="empty"><div class="ic">🕊️</div><p>Cargando tu espacio…</p></div></div>`; }
 function renderPaywall() {
@@ -644,11 +652,49 @@ function viewCalendario(app) {
         <span class="k"><span class="sw" style="background:var(--coral-soft);border:1px solid #fed7aa"></span> ${esc(nombre('B'))}</span>
         <span class="k"><span class="sw" style="background:var(--rose)"></span> evento</span></div></div>
     ${swapsSection()}
+    ${overridesSection()}
     <div class="section-title">Eventos de ${MESES[calRef.getMonth()]}</div>
     <div class="card" id="cal-events"></div></div>
     <button class="fab" onclick="modalEvento()">＋</button>`;
   drawCal();
 }
+
+/* --------- Feriados y vacaciones (excepciones de custodia) --------- */
+function overridesSection() {
+  const hoy = today();
+  const ovs = (D().overrides || []).filter(o => (o.end || o.start || o.date) >= hoy)
+    .sort((a, b) => String(a.start || a.date).localeCompare(String(b.start || b.date)));
+  const rows = ovs.map(o => {
+    const ini = o.start || o.date, fin = o.end || o.start || o.date;
+    const rango = ini === fin ? fechaLarga(ini) : `${fechaLarga(ini)} → ${fechaLarga(fin)}`;
+    return `<div class="list-row"><div class="avatar" style="background:${color(o.who)}">🏖️</div>
+      <div class="body"><div class="t">${esc(rango)}</div><div class="s">Con ${esc(nombre(o.who))}${o.note ? ' · ' + esc(o.note) : ''}</div></div>
+      <button class="btn sm ghost" onclick="delOverride('${o.id}')">✕</button></div>`;
+  }).join('');
+  return `<div class="section-title">🏖️ Feriados y vacaciones ${ovs.length ? `<span class="count">${ovs.length}</span>` : ''}</div>
+    <div class="card">${rows || `<div class="empty"><div class="ic">🏖️</div><p>Sin excepciones. Úsalas para feriados o vacaciones.</p></div>`}
+      <button class="btn block outline" style="margin-top:10px" onclick="modalOverride()">＋ Agregar feriado / vacaciones</button></div>`;
+}
+function modalOverride(fecha) {
+  const f = fecha || today();
+  openSheet('Feriado / vacaciones', `
+    <p class="hint" style="margin-bottom:12px">Marca un día o un rango en que la custodia cambia (feriado, vacaciones, viaje). Tiene prioridad sobre el esquema normal.</p>
+    <div class="row2"><div class="field"><label>Desde</label><input id="ov-d1" type="date" value="${f}"></div>
+      <div class="field"><label>Hasta</label><input id="ov-d2" type="date" value="${f}"></div></div>
+    <div class="field"><label>¿Con quién quedan?</label><div class="seg" id="ov-who">
+      <button data-v="A" class="on">${esc(nombre('A'))}</button><button data-v="B">${esc(nombre('B'))}</button></div></div>
+    <div class="field"><label>Nota (opcional)</label><input id="ov-note" placeholder="Ej. Vacaciones de invierno, Navidad…"></div>
+    <button class="btn block" id="ov-go">Guardar</button>`);
+  segBind('#ov-who');
+  $('#ov-go').onclick = () => act(async () => {
+    const start = $('#ov-d1').value, end = $('#ov-d2').value || start;
+    if (!start) return toast('Elige la fecha');
+    if (end < start) return toast('La fecha "hasta" no puede ser antes de "desde"');
+    await Store.create('overrides', { start, end, who: segVal('#ov-who'), note: $('#ov-note').value.trim(), ts: Date.now() });
+    closeSheet(); render(); toast('Excepción guardada ✓');
+  });
+}
+const delOverride = (id) => act(async () => { await Store.remove('overrides', id); closeSheet && closeSheet(); render(); toast('Excepción eliminada'); });
 
 /* --------- Intercambios de días --------- */
 function swapsSection() {
@@ -725,7 +771,8 @@ function modalDia(s) {
       <div class="body" style="cursor:pointer" onclick="modalEvento('${e.date}','${e.id}')"><div class="t">${esc(e.title)}</div><div class="s">${e.time || 'Todo el día'} · ${esc(nombre(e.who))}</div></div>
       <button class="btn sm ghost" onclick="modalEvento('${e.date}','${e.id}')">Editar</button></div>`).join('') : `<p class="hint" style="margin-bottom:14px">Sin eventos este día.</p>`}
     <button class="btn block" onclick="modalEvento('${s}')">＋ Añadir evento</button>
-    <button class="btn block ghost" style="margin-top:10px" onclick="modalProponerSwap('${s}')">🔄 Proponer intercambio</button>`);
+    <button class="btn block ghost" style="margin-top:10px" onclick="modalProponerSwap('${s}')">🔄 Proponer intercambio</button>
+    <button class="btn block ghost" style="margin-top:10px" onclick="modalOverride('${s}')">🏖️ Feriado / vacaciones</button>`);
 }
 function modalEvento(fecha, id) {
   const ev = id ? D().events.find(x => x.id === id) : null;
@@ -809,9 +856,48 @@ function viewGastos(app) {
     <div class="card">${filtered.length ? filtered.map(gastoRow).join('') : `<div class="empty"><div class="ic">🧾</div><p>${items.length ? 'Sin resultados' : 'Aún no hay gastos'}</p></div>`}</div>
     ${sets.length ? `<div class="section-title">Reembolsos / abonos <span class="count">${sets.length}</span></div>
       <div class="card">${sets.map(abonoRow).join('')}</div>` : ''}
+    ${recurrentesSection()}
     </div>
     <button class="fab" onclick="modalGasto()">＋</button>`;
 }
+/* --------- Gastos recurrentes (se crean solos cada mes) --------- */
+function recurrentesSection() {
+  const recs = D().recurring || [];
+  const rows = recs.map(r => `<div class="list-row"><div class="avatar" style="background:${color(r.payer)}">🔁</div>
+    <div class="body"><div class="t">${esc(r.title)} · ${money(r.amount)}</div>
+      <div class="s">Cada día ${r.dia || 1} · paga ${esc(nombre(r.payer))} · ${esc(r.cat || 'Otro')}</div></div>
+    <button class="btn sm ghost" onclick="delRecurrente('${r.id}')">✕</button></div>`).join('');
+  return `<div class="section-title">🔁 Gastos recurrentes ${recs.length ? `<span class="count">${recs.length}</span>` : ''}</div>
+    <div class="card">${rows || `<div class="empty"><div class="ic">🔁</div><p>Ej. colegiatura o mensualidades que se repiten.</p></div>`}
+      <button class="btn block outline" style="margin-top:10px" onclick="modalRecurrente()">＋ Agregar gasto recurrente</button></div>`;
+}
+function modalRecurrente() {
+  const cats = ['Educación','Salud','Ropa','Alimentación','Actividades','Transporte','Otro'];
+  const kidsOpts = `<option value="">— General —</option>` + D().kids.map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join('');
+  openSheet('Gasto recurrente', `
+    <p class="hint" style="margin-bottom:12px">Se creará automáticamente cada mes en el día que elijas (ej. colegiatura).</p>
+    <div class="field"><label>Concepto</label><input id="rc-t" placeholder="Ej. Colegiatura"></div>
+    <div class="row2"><div class="field"><label>Monto</label><input id="rc-a" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Día del mes</label><input id="rc-dia" type="number" min="1" max="28" value="1"></div></div>
+    <div class="field"><label>¿Quién paga?</label><div class="seg" id="rc-p"><button data-v="A" class="on">${esc(nombre('A'))}</button><button data-v="B">${esc(nombre('B'))}</button></div></div>
+    <div class="row2"><div class="field"><label>Categoría</label><select id="rc-c">${cats.map(c => `<option>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Hijo/a</label><select id="rc-k">${kidsOpts}</select></div></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:6px 0"><input type="checkbox" id="rc-now" checked style="width:18px;height:18px"> Crear también el gasto de este mes ahora</label>
+    <button class="btn block" id="rc-go">Guardar</button>`);
+  segBind('#rc-p');
+  $('#rc-go').onclick = () => act(async () => {
+    const title = $('#rc-t').value.trim(); const amount = parseFloat($('#rc-a').value);
+    if (!title) return toast('Escribe el concepto'); if (!amount || amount <= 0) return toast('Escribe el monto');
+    const dia = Math.max(1, Math.min(28, parseInt($('#rc-dia').value, 10) || 1));
+    const payer = segVal('#rc-p'), cat = $('#rc-c').value, kid = $('#rc-k').value;
+    const mesAct = today().slice(0, 7);
+    const crearAhora = $('#rc-now').checked;
+    await Store.create('recurring', { title, amount, dia, payer, split: 50, cat, kid, lastMonth: crearAhora ? mesAct : null, ts: Date.now() });
+    if (crearAhora) await Store.create('expenses', { title, amount, date: `${mesAct}-${String(dia).padStart(2,'0')}`, payer, split: 50, cat, kid, settled: false });
+    closeSheet(); render(); toast('Gasto recurrente guardado ✓');
+  });
+}
+const delRecurrente = (id) => act(async () => { await Store.remove('recurring', id); render(); toast('Recurrente eliminado'); });
 function gastoRow(e) {
   const kid = D().kids.find(k => k.id === e.kid), debeOtro = e.amount * (1 - e.split / 100);
   return `<div class="list-row"><div class="avatar" style="background:${color(e.payer)}">${inicial(nombre(e.payer))}</div>
@@ -1120,17 +1206,47 @@ function modalHijoVer(id) {
       <button class="btn block outline" style="margin-top:8px" onclick="modalHorario('${k.id}')">Editar horario de materias</button>
       ${CLOUD ? `<button class="btn block ghost" style="margin-top:8px" onclick="modalLeerHorario('${k.id}')">📷 Leer horario desde una foto</button>
       <button class="btn block ghost" style="margin-top:8px" onclick="modalLeerFoto('${k.id}')">📷 Leer evaluaciones desde una foto</button>` : ''}
-      <button class="btn block ghost" style="margin-top:8px" onclick="cargarDatosColegio('${k.id}')">📥 Cargar datos del colegio (6° básico)</button>
       ${((k.timetable && k.timetable.length) || (D().tasks || []).some(t => t.kid === k.id)) ? `<button class="btn block ghost" style="margin-top:8px" onclick="exportarColegioPDF('${k.id}')">🧾 Exportar horario y evaluaciones (PDF)</button>` : ''}</div>
     ${k.docPhoto ? `<div style="margin-top:16px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">🖼️ Horario / calendario (foto)</div>
       <img src="${k.docPhoto}" onclick="verImagenHijoDoc('${k.id}')" style="max-width:100%;border-radius:12px;border:1px solid var(--line);cursor:pointer"></div>` : ''}
-    ${(k.teachers && k.teachers.length) ? `<div style="margin-top:16px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">👩‍🏫 Profesores</div>
-      <div class="card" style="padding:6px 12px">${k.teachers.map(p => `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+    <div style="margin-top:16px"><div style="font-weight:700;font-size:13px;color:var(--slate);margin-bottom:6px">👩‍🏫 Profesores</div>
+      ${(k.teachers && k.teachers.length) ? `<div class="card" style="padding:6px 12px">${k.teachers.map(p => `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
         <div style="font-weight:600;font-size:14px">${esc(p.s)}</div>
-        <div style="font-size:13px;color:var(--slate)">${esc(p.n)}</div>
-        <a href="mailto:${esc(p.e)}" style="font-size:13px;color:var(--teal-700);word-break:break-all">${esc(p.e)}</a></div>`).join('')}</div></div>` : ''}
+        ${p.n ? `<div style="font-size:13px;color:var(--slate)">${esc(p.n)}</div>` : ''}
+        ${p.e ? `<a href="mailto:${esc(p.e)}" style="font-size:13px;color:var(--teal-700);word-break:break-all">${esc(p.e)}</a>` : ''}</div>`).join('')}</div>` : `<div class="hint">Aún no agregas profesores.</div>`}
+      <button class="btn block outline" style="margin-top:8px" onclick="modalProfesores('${k.id}')">✎ Agregar / editar profesores</button></div>
     <div class="row2" style="margin-top:18px"><button class="btn ghost" onclick="modalHijo('${k.id}')">Editar datos</button><button class="btn outline" onclick="delHijo('${k.id}')">Eliminar</button></div>`);
 }
+/* ---- Profesores (agregar/editar a mano) ---- */
+function modalProfesores(kidId) {
+  const k = D().kids.find(x => x.id === kidId); if (!k) return;
+  const ts = k.teachers || [];
+  openSheet(`Profesores · ${esc(k.name)}`, `
+    <div class="card">${ts.length ? ts.map((p, i) => `<div class="list-row"><div class="avatar" style="background:${subColor(p.s || p.n || '?')};color:#0f172a">${esc(String(p.s || p.n || '?')[0].toUpperCase())}</div>
+      <div class="body"><div class="t">${esc(p.s || '')}</div><div class="s">${esc(p.n || '')}${p.e ? ' · ' + esc(p.e) : ''}</div></div>
+      <button class="btn sm ghost" onclick="profEdit('${kidId}',${i})">✎</button>
+      <button class="btn sm ghost" onclick="profDel('${kidId}',${i})">✕</button></div>`).join('') : `<div class="empty"><div class="ic">👩‍🏫</div><p>Sin profesores aún</p></div>`}</div>
+    <button class="btn block" style="margin-top:10px" onclick="profEdit('${kidId}',-1)">＋ Agregar profesor</button>`);
+}
+function profEdit(kidId, i) {
+  const k = D().kids.find(x => x.id === kidId); if (!k) return;
+  const ts = k.teachers || []; const p = i >= 0 ? ts[i] : { s: '', n: '', e: '' };
+  openSheet(i >= 0 ? 'Editar profesor' : 'Agregar profesor', `
+    <div class="field"><label>Ramo / asignatura</label><input id="pf-s" value="${esc(p.s || '')}" placeholder="Ej. Matemáticas"></div>
+    <div class="field"><label>Nombre del profesor/a</label><input id="pf-n" value="${esc(p.n || '')}" placeholder="Nombre y apellido"></div>
+    <div class="field"><label>Correo (opcional)</label><input id="pf-e" type="email" value="${esc(p.e || '')}" placeholder="correo@colegio.cl"></div>
+    <button class="btn block" id="pf-go">Guardar</button>`);
+  $('#pf-go').onclick = () => act(async () => {
+    const s = $('#pf-s').value.trim(); if (!s) return toast('Escribe el ramo');
+    const nuevo = { s, n: $('#pf-n').value.trim(), e: $('#pf-e').value.trim() };
+    const arr = (k.teachers || []).slice();
+    if (i >= 0) arr[i] = nuevo; else arr.push(nuevo);
+    await Store.update('kids', kidId, { ...k, teachers: arr });
+    modalProfesores(kidId); toast('Guardado ✓');
+  });
+}
+const profDel = (kidId, i) => act(async () => { const k = D().kids.find(x => x.id === kidId); const arr = (k.teachers || []).slice(); arr.splice(i, 1); await Store.update('kids', kidId, { ...k, teachers: arr }); modalProfesores(kidId); toast('Eliminado'); });
+
 /* ---- Horario de materias (grilla semanal por hijo) ---- */
 const DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'];
 function subColor(s = '') { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 60% 87%)`; }
@@ -1188,93 +1304,6 @@ function ttAdd(id) {
 }
 function ttDel(id, i) {
   act(async () => { const k = D().kids.find(x => x.id === id); const tt = (k.timetable || []).slice(); tt.splice(i, 1); await Store.update('kids', id, { ...k, timetable: tt }); modalHorario(id); });
-}
-/* ---- Preset: Colegio Conquistadores · 6° básico 2026 ----
-   Horario semanal de materias + calendario de evaluaciones + profesores.
-   Se carga con un toque en el perfil del hijo/a. */
-const COLE_HORARIO = (() => {
-  const B = (day, blocks) => blocks.map(([start, end, subject]) => ({ day, start, end, subject, room: '' }));
-  return [].concat(
-    B('Lun', [['08:15','09:00','Historia y Cs. Sociales'],['09:00','09:45','Historia y Cs. Sociales'],['10:00','10:45','Artes visuales'],['10:45','11:30','Artes visuales'],['11:45','12:30','Religión'],['12:30','13:15','Religión'],['14:00','14:45','Lenguaje'],['14:45','15:30','Lenguaje']]),
-    B('Mar', [['08:15','09:00','Historia y Cs. Sociales'],['09:00','09:45','Historia y Cs. Sociales'],['10:00','10:45','Cs. Naturales'],['10:45','11:30','Cs. Naturales'],['11:45','12:30','Matemáticas'],['12:30','13:15','Matemáticas'],['14:00','14:45','Taller: Poder de los números'],['14:45','15:30','Taller: Poder de los números'],['16:00','17:30','Taekwondo']]),
-    B('Mié', [['08:15','09:00','Inglés'],['09:00','09:45','Orientación'],['10:00','10:45','Ed. Física'],['10:45','11:30','Ed. Física'],['11:45','12:30','Tecnología'],['12:30','13:15','Tecnología'],['14:00','14:45','Música'],['14:45','15:30','Música'],['16:00','17:30','Teatro']]),
-    B('Jue', [['08:15','09:00','Matemáticas'],['09:00','09:45','Matemáticas'],['10:00','10:45','Lenguaje'],['10:45','11:30','Lenguaje'],['11:45','12:30','Cs. Naturales'],['12:30','13:15','Cs. Naturales'],['14:00','14:45','Taller: Conquistadores de libros'],['14:45','15:30','Taller: Conquistadores de libros'],['16:00','17:30','Danza/fútbol']]),
-    B('Vie', [['08:15','09:00','Lenguaje'],['09:00','09:45','Lenguaje'],['10:00','10:45','Matemáticas'],['10:45','11:30','Matemáticas'],['11:45','12:30','Inglés'],['12:30','13:15','Inglés']])
-  );
-})();
-const COLE_PROFES = [
-  { s: 'Lenguaje / Religión', n: 'Elsa Díaz', e: 'e.diazconquistadores@gmail.com' },
-  { s: 'Inglés', n: 'Francisca Tello', e: 'f.telloconquistadores@gmail.com' },
-  { s: 'Matemáticas / Orientación', n: 'Francisca Moroso', e: 'f.morosoconquistadores@gmail.com' },
-  { s: 'Historia y Cs. Sociales', n: 'Juan Pablo Castillo', e: 'jp.castilloconquistadores@gmail.com' },
-  { s: 'Cs. Naturales', n: 'Magda Aranda', e: 'm.arandaconquistadores@gmail.com' },
-  { s: 'Tecnología / Artes visuales', n: 'Mariana Paradela', e: 'm.paradelaconquistadores@gmail.com' },
-  { s: 'Música', n: 'Rodrigo Araya', e: 'r.arayaconquistadores@gmail.com' },
-  { s: 'Ed. Física', n: 'Jorge Rodríguez', e: 'j.rodriguezconquistadores@gmail.com' },
-];
-const COLE_EVALS = [
-  ['2026-08-03','Formativa','Lenguaje','Lectura domiciliaria 30%: “Un secreto en mi colegio”'],
-  ['2026-08-04','Sumativa','Artes visuales','Bajorrelieve'],
-  ['2026-08-05','Sumativa','Tecnología','Disertación sobre la evolución de un objeto tecnológico'],
-  ['2026-08-06','Formativa','Lenguaje','Lectura domiciliaria 70%: “Un secreto en mi colegio”'],
-  ['2026-08-07','Sumativa','Matemáticas','Suma y resta, números decimales (multiplicación y división)'],
-  ['2026-08-10','Sumativa','Lenguaje','Elementos textuales, infografías, textos de opinión'],
-  ['2026-08-10','Sumativa','Historia','Regiones de Chile'],
-  ['2026-08-13','Sumativa','Cs. Naturales','Lección 5: Energía'],
-  ['2026-08-19','Sumativa','Tecnología','Diseño de idea e innovación tecnológica'],
-  ['2026-08-24','Sumativa','Artes visuales','Escultura con materiales reciclados'],
-  ['2026-08-24','Sumativa','Religión','Empatía y tolerancia'],
-  ['2026-08-24','Formativa','Lenguaje','Lectura domiciliaria 30%: “La guerra del bosque”'],
-  ['2026-08-26','Sumativa','Ed. Física','Ejecución correcta de una danza nacional'],
-  ['2026-08-27','Formativa','Lenguaje','Lectura domiciliaria 70%: “La guerra del bosque”'],
-  ['2026-08-28','Sumativa','Música','Unidad n°3 y repertorio'],
-  ['2026-09-03','Sumativa','Matemáticas','Juego matemático'],
-  ['2026-09-04','Sumativa','Inglés','Present perfect – have/has'],
-  ['2026-09-25','Sumativa','Ed. Física','Presentación gala de raíz folclórica'],
-  ['2026-09-28','Sumativa','Lenguaje','Artículos informativos, claves textuales, comparar noticias'],
-  ['2026-10-09','Sumativa','Inglés','Properties / Passive voice'],
-  ['2026-10-09','Sumativa','Música','Repertorio popular folclórico latinoamericano'],
-  ['2026-10-11','Sumativa','Artes visuales','Mosaiquismo. Arte urbano'],
-  ['2026-10-14','Sumativa','Tecnología','El objeto tecnológico'],
-  ['2026-10-18','Sumativa','Ed. Física','Deportes individuales y colectivos aplicando reglas del juego'],
-  ['2026-10-20','Sumativa','Matemáticas','Razón y porcentaje'],
-  ['2026-10-22','Sumativa','Cs. Naturales','Lección 7'],
-  ['2026-10-26','Sumativa','Religión','Democracia y perseverancia'],
-  ['2026-10-26','Formativa','Lenguaje','Lectura domiciliaria 30%: “El gigante bonachón”'],
-  ['2026-10-27','Sumativa','Historia','Conformación del territorio chileno del siglo XIX'],
-  ['2026-10-28','Sin calificar','SIMCE','Matemáticas y cuestionario estudiantes'],
-  ['2026-10-29','Sin calificar','SIMCE','Lectura'],
-  ['2026-10-30','Formativa','Lenguaje','Lectura domiciliaria 70%: “El gigante bonachón”'],
-  ['2026-11-02','Sumativa','Lenguaje','Conectores, tipos de narradores y personajes'],
-  ['2026-11-06','Sumativa','Inglés','Unit 7: Animals and survival'],
-  ['2026-11-23','Sumativa','Religión','Honestidad'],
-  ['2026-11-25','Sumativa','Música','Unidad n°4 y repertorio'],
-  ['2026-11-26','Sumativa','Cs. Naturales','Erosión del suelo'],
-  ['2026-11-30','Sumativa','Lenguaje','Sinónimos, hipónimos e hiperónimos'],
-  ['2026-12-03','Formativa','Lenguaje','Lectura domiciliaria 30%: “El principito”'],
-  ['2026-12-04','Formativa','Lenguaje','Lectura domiciliaria 70%: “El principito”'],
-];
-function cargarDatosColegio(kidId) {
-  const k = D().kids.find(x => x.id === kidId); if (!k) return;
-  const yaCargado = (D().tasks || []).some(t => t.origen === 'cole2026');
-  const seguir = () => act(async () => {
-    closeSheet();
-    toast('Cargando horario y evaluaciones…');
-    // Limpia el bloque de profesores que versiones anteriores dejaban en las notas.
-    const notas = String(k.schedule || '').split('Profesores 6° básico:')[0].trim();
-    await Store.update('kids', kidId, { ...k, timetable: COLE_HORARIO, schedule: notas, teachers: COLE_PROFES });
-    const tareas = COLE_EVALS.map(([due, tipo, subject, contenido]) => ({
-      title: contenido, subject, kid: kidId, due, type: 'colegio',
-      note: `${tipo} · 6° básico`, done: false, origen: 'cole2026',
-    }));
-    await Store.bulkCreate('tasks', tareas);
-    render(); toast(`✓ Horario y ${tareas.length} evaluaciones cargadas`);
-  });
-  openSheet('Cargar datos del colegio', `
-    <p class="hint" style="margin-bottom:12px">Se cargará el <b>horario de materias</b> de 6° básico y <b>${COLE_EVALS.length} evaluaciones</b> (agosto–diciembre 2026) como tareas de ${esc(k.name)}, con recordatorio 1 día antes. También se guardan los correos de los profesores.</p>
-    ${yaCargado ? `<p class="hint" style="color:var(--rose);margin-bottom:12px">⚠️ Ya cargaste estos datos antes. Si continúas se duplicarán las evaluaciones.</p>` : ''}
-    <button class="btn block" id="cole-go">${yaCargado ? 'Cargar de nuevo' : 'Cargar ahora'}</button>`);
-  $('#cole-go').onclick = seguir;
 }
 /* Leer una foto del calendario de evaluaciones con IA y crear las tareas. */
 function modalLeerFoto(kidId) {
@@ -1470,28 +1499,109 @@ function modalAjustes() {
     ${!CLOUD ? `<div class="field"><label>¿Quién eres tú?</label><div class="seg" id="st-me">
       <button data-v="A" class="${meRole()==='A'?'on':''}">${esc(f.parents.A||'A')}</button>
       <button data-v="B" class="${meRole()==='B'?'on':''}">${esc(f.parents.B||'B')}</button></div></div>` : ''}
-    <div class="field"><label>Moneda</label><select id="st-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}" ${f.currency===c?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="row2"><div class="field"><label>Moneda</label><select id="st-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}" ${f.currency===c?'selected':''}>${c}</option>`).join('')}</select></div>
+      <div class="field"><label>Aviso de recordatorios</label><select id="st-rem">${[0,1,2,3].map(n => `<option value="${n}" ${(f.reminderDays==null?1:f.reminderDays)===n?'selected':''}>${n===0?'El mismo día':n+' día'+(n>1?'s':'')+' antes'}</option>`).join('')}</select></div></div>
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
     <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
-    ${CLOUD ? `<button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
+    ${CLOUD ? `<button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
+    <button class="btn block outline" onclick="modalLista()" style="margin-top:10px">🛒 Lista de necesidades</button>
+    <button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
     <button class="btn block outline" onclick="modalActividad()" style="margin-top:10px">🕘 Actividad reciente</button>
     <button class="btn block outline" onclick="modalCalendario()" style="margin-top:10px">📆 Suscribir calendario</button>` : ''}
+    <button class="btn block outline" onclick="mostrarTour(true)" style="margin-top:10px">👋 Ver guía de bienvenida</button>
     <button class="btn block outline" onclick="modalAyuda()" style="margin-top:10px">❓ Ayuda y soporte</button>
     ${inviteRow}
     ${CLOUD ? `<button class="btn block danger" onclick="modalEliminarCuenta()" style="margin-top:10px">🗑️ Eliminar mi cuenta</button>` : ''}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
-    <p class="hint" style="text-align:center;margin-top:14px">Copaz v26 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
+    <p class="hint" style="text-align:center;margin-top:14px">Copaz v28 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
   if (!CLOUD) segBind('#st-me');
   $('#st-save').onclick = () => act(async () => {
     const parents = { A: $('#st-a').value.trim() || 'Yo', B: $('#st-b').value.trim() || 'Otro' };
-    await Store.patchFamily({ currency: $('#st-cur').value, parents });
+    const rem = parseInt(($('#st-rem') || {}).value, 10);
+    await Store.patchFamily({ currency: $('#st-cur').value, parents, reminderDays: isNaN(rem) ? 1 : rem });
     if (!CLOUD && $('#st-me')) { D().auth.role = segVal('#st-me'); D().auth.name = parents[D().auth.role]; Store._save(); }
     closeSheet(); render(); toast('Ajustes guardados');
   });
   const rst = $('#st-reset');
   if (rst) rst.onclick = () => { if (confirm('¿Borrar todos los datos? No se puede deshacer.')) { Store.wipeLocal(); closeSheet(); go('inicio'); render(); } };
 }
+
+/* =============================== ACUERDOS =========================== */
+function modalAcuerdos() {
+  const ags = [...(D().agreements || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  openSheet('Acuerdos de coparentalidad 🤝', `
+    <p class="hint" style="margin-bottom:12px">Anoten acuerdos importantes (horarios, gastos, reglas). Ambos pueden confirmar que están de acuerdo; queda registrado.</p>
+    <button class="btn block" onclick="modalAcuerdoNuevo()">＋ Nuevo acuerdo</button>
+    <div style="margin-top:14px">${ags.length ? ags.map(acuerdoRow).join('') : `<div class="empty"><div class="ic">🤝</div><p>Aún no hay acuerdos</p></div>`}</div>`);
+}
+function acuerdoRow(a) {
+  const me = meRole(), okA = !!a.aceptaA, okB = !!a.aceptaB;
+  const estado = (okA && okB) ? '<span class="badge green">✓ Ambos aceptaron</span>' : `<span class="badge amber">Falta ${!okA ? esc(nombre('A')) : esc(nombre('B'))}</span>`;
+  const yoAcepte = me === 'A' ? okA : okB;
+  return `<div class="card" style="margin-bottom:10px"><div style="font-weight:700">${esc(a.title)}</div>
+    ${a.text ? `<div style="font-size:13.5px;color:var(--slate);white-space:pre-line;margin:4px 0 8px">${esc(a.text)}</div>` : ''}
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px">${estado}
+      ${yoAcepte ? '<span class="badge teal">Tú aceptaste ✓</span>' : `<button class="btn sm" onclick="aceptarAcuerdo('${a.id}')">Acepto</button>`}
+      <button class="btn sm ghost" onclick="delAcuerdo('${a.id}')">✕</button></div></div>`;
+}
+function modalAcuerdoNuevo() {
+  openSheet('Nuevo acuerdo', `
+    <div class="field"><label>Título</label><input id="ag-t" placeholder="Ej. Vacaciones de verano"></div>
+    <div class="field"><label>Detalle</label><textarea id="ag-x" style="min-height:120px" placeholder="Describe el acuerdo…"></textarea></div>
+    <button class="btn block" id="ag-go">Guardar acuerdo</button>`);
+  $('#ag-go').onclick = () => act(async () => {
+    const title = $('#ag-t').value.trim(); if (!title) return toast('Escribe un título');
+    const me = meRole();
+    await Store.create('agreements', { title, text: $('#ag-x').value.trim(), by: me, ts: Date.now(), aceptaA: me === 'A', aceptaB: me === 'B' });
+    closeSheet(); modalAcuerdos(); toast('Acuerdo creado');
+  });
+}
+const aceptarAcuerdo = (id) => act(async () => { const a = (D().agreements || []).find(x => x.id === id); if (!a) return; const me = meRole(); await Store.update('agreements', id, { ...a, aceptaA: me === 'A' ? true : a.aceptaA, aceptaB: me === 'B' ? true : a.aceptaB }); modalAcuerdos(); toast('Aceptado ✓'); });
+const delAcuerdo = (id) => act(async () => { await Store.remove('agreements', id); modalAcuerdos(); toast('Eliminado'); });
+
+/* =========================== LISTA DE NECESIDADES ==================== */
+function modalLista() {
+  const items = [...(D().shopping || [])].sort((a, b) => (a.done === b.done ? (b.ts || 0) - (a.ts || 0) : (a.done ? 1 : -1)));
+  openSheet('Lista de necesidades 🛒', `
+    <p class="hint" style="margin-bottom:10px">Cosas que necesitan los niños (útiles, ropa, medicinas). Ambos ven y marcan.</p>
+    <div style="display:flex;gap:8px"><input id="ls-in" class="field" style="margin:0;flex:1" placeholder="Ej. Zapatillas talla 34">
+      <button class="btn" onclick="addLista()">Agregar</button></div>
+    <div style="margin-top:12px">${items.length ? items.map(listaRow).join('') : `<div class="empty"><div class="ic">🛒</div><p>Lista vacía</p></div>`}</div>`);
+  const inp = $('#ls-in'); if (inp) inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addLista(); } };
+}
+function listaRow(it) {
+  return `<div class="list-row"><button onclick="toggleLista('${it.id}')" style="width:24px;height:24px;border-radius:7px;border:2px solid ${it.done ? 'var(--teal-500)' : 'var(--line)'};background:${it.done ? 'var(--teal-500)' : 'transparent'};color:#fff;flex:none;cursor:pointer">${it.done ? '✓' : ''}</button>
+    <div class="body" style="margin-left:10px"><div class="t" style="${it.done ? 'text-decoration:line-through;opacity:.55' : ''}">${esc(it.text)}</div></div>
+    <button class="btn sm ghost" onclick="delLista('${it.id}')">✕</button></div>`;
+}
+function addLista() { const inp = $('#ls-in'); const t = (inp && inp.value || '').trim(); if (!t) return; act(async () => { await Store.create('shopping', { text: t, done: false, by: meRole(), ts: Date.now() }); modalLista(); }); }
+const toggleLista = (id) => act(async () => { const it = (D().shopping || []).find(x => x.id === id); if (!it) return; await Store.update('shopping', id, { ...it, done: !it.done }); modalLista(); });
+const delLista = (id) => act(async () => { await Store.remove('shopping', id); modalLista(); });
+
+/* =============================== TOUR =============================== */
+function mostrarTour(force) {
+  if (!force && localStorage.getItem('copaz.tourDone')) return;
+  const pasos = [
+    ['👋 Bienvenido a Copaz', 'Coordina todo lo de tus hijos con el otro padre/madre en un solo lugar y sincronizado en tiempo real.'],
+    ['📅 Custodia', 'Mira quién tiene a los niños cada día, propón intercambios y marca feriados o vacaciones.'],
+    ['💰 Gastos', 'Registra gastos compartidos, mira quién debe a quién y crea gastos recurrentes como la colegiatura.'],
+    ['📝 Tareas y colegio', 'Guarda el horario y las evaluaciones (¡puedes leerlos desde una foto!) con recordatorios automáticos.'],
+    ['💬 Chat respetuoso', 'Escríbanse dentro de la app; bloquea mensajes ofensivos para mantener la calma.'],
+    ['🤝 Todo listo', 'Invita al otro padre/madre desde Ajustes con el código. ¡Que se lleven en paz!'],
+  ];
+  let i = 0;
+  const show = () => {
+    const [t, d] = pasos[i];
+    openSheet(t, `<p style="font-size:15px;line-height:1.5">${d}</p>
+      <div style="display:flex;justify-content:center;gap:6px;margin:16px 0">${pasos.map((_, j) => `<span style="width:8px;height:8px;border-radius:99px;background:${j === i ? 'var(--teal-500)' : 'var(--line)'}"></span>`).join('')}</div>
+      <div class="row2"><button class="btn ghost" onclick="cerrarTour()">${i === 0 ? 'Saltar' : 'Cerrar'}</button>
+        <button class="btn" id="tour-next">${i < pasos.length - 1 ? 'Siguiente' : 'Empezar'}</button></div>`);
+    $('#tour-next').onclick = () => { if (i < pasos.length - 1) { i++; show(); } else cerrarTour(); };
+  };
+  show();
+}
+function cerrarTour() { localStorage.setItem('copaz.tourDone', '1'); closeSheet(); }
 /* =============================== TAREAS =============================== */
 function viewTareas(app) {
   const hoyISO = iso(new Date());
@@ -1748,7 +1858,11 @@ Object.assign(window, {
   verImagen, verImagenDoc, verReciboGasto, verImagenMensaje,
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
-  viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel, cargarDatosColegio,
+  viewTareas, modalTarea, toggleTarea, delTarea, modalHorario, ttAdd, ttDel,
   exportarTareasPDF, exportarColegioPDF, verImagenHijoDoc, modalAgenda, modalAyuda, modalEliminarCuenta,
   modalLeerFoto, guardarOcr, modalLeerHorario, guardarHorarioOcr,
+  modalProfesores, profEdit, profDel,
+  modalOverride, delOverride, modalRecurrente, delRecurrente,
+  modalAcuerdos, modalAcuerdoNuevo, aceptarAcuerdo, delAcuerdo,
+  modalLista, addLista, toggleLista, delLista, mostrarTour, cerrarTour,
 });
