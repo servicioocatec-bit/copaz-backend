@@ -254,8 +254,28 @@ const currentRoute = () => { const h = location.hash.replace('#/', '').split('/'
 const go = (r) => { location.hash = '#/' + r; };
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', boot);
-function aplicarTema() { const t = localStorage.getItem('copaz.theme'); if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); else document.documentElement.removeAttribute('data-theme'); }
-function alternarTema() { const nuevo = localStorage.getItem('copaz.theme') === 'dark' ? 'light' : 'dark'; localStorage.setItem('copaz.theme', nuevo); aplicarTema(); closeSheet(); render(); toast(nuevo === 'dark' ? '🌙 Modo oscuro' : '☀️ Modo claro'); }
+/* Modo de tema: 'light' | 'dark' | 'auto'. En 'auto' sigue el modo del teléfono
+   (que cambia de día/noche) y, si no lo indica, usa la hora (19:00–06:59 = oscuro). */
+function temaEfectivo(mode) {
+  if (mode === 'dark') return 'dark';
+  if (mode === 'light') return 'light';
+  const mm = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+  if (mm && mm.media !== 'not all') return mm.matches ? 'dark' : 'light';
+  const h = new Date().getHours(); return (h >= 19 || h < 7) ? 'dark' : 'light';
+}
+function aplicarTema() {
+  const mode = localStorage.getItem('copaz.theme') || 'light';
+  if (temaEfectivo(mode) === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+}
+function setTema(mode) {
+  localStorage.setItem('copaz.theme', mode); aplicarTema(); closeSheet(); render();
+  toast(mode === 'dark' ? '🌙 Modo oscuro' : mode === 'light' ? '☀️ Modo claro' : '🌗 Automático (día/noche)');
+}
+function alternarTema() { const m = localStorage.getItem('copaz.theme'); setTema(m === 'dark' ? 'light' : 'dark'); }
+// Reaccionar a cambios del sistema y revisar la hora cada 15 min cuando está en automático.
+if (window.matchMedia) { try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if ((localStorage.getItem('copaz.theme') || 'light') === 'auto') aplicarTema(); }); } catch {} }
+setInterval(() => { if ((localStorage.getItem('copaz.theme') || 'light') === 'auto') aplicarTema(); }, 15 * 60 * 1000);
 async function boot() { aplicarTema(); await Store.init(); render(); if (localStorage.getItem('copaz.pushOn')) enablePush(false).catch(() => {}); }
 
 /* ================================ RENDER =============================== */
@@ -1518,7 +1538,8 @@ function modalAjustes() {
       <div class="field"><label>Aviso de recordatorios</label><select id="st-rem">${[0,1,2,3].map(n => `<option value="${n}" ${(f.reminderDays==null?1:f.reminderDays)===n?'selected':''}>${n===0?'El mismo día':n+' día'+(n>1?'s':'')+' antes'}</option>`).join('')}</select></div></div>
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
-    <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
+    <div class="field" style="margin-top:10px"><label>Apariencia</label><select id="st-theme" onchange="setTema(this.value)">
+      ${[['light', '☀️ Claro'], ['dark', '🌙 Oscuro'], ['auto', '🌗 Automático (día/noche)']].map(([v, l]) => `<option value="${v}" ${(localStorage.getItem('copaz.theme') || 'light') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
     ${CLOUD ? `<button class="btn block outline" onclick="modalEspacios()" style="margin-top:10px">👨‍👩‍👧 Mis espacios (varios hijos/parejas)</button>
     <button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
     <button class="btn block outline" onclick="modalLista()" style="margin-top:10px">🛒 Lista de necesidades</button>
@@ -1530,7 +1551,7 @@ function modalAjustes() {
     ${inviteRow}
     ${CLOUD ? `<button class="btn block danger" onclick="modalEliminarCuenta()" style="margin-top:10px">🗑️ Eliminar mi cuenta</button>` : ''}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
-    <p class="hint" style="text-align:center;margin-top:14px">Copaz v30 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
+    <p class="hint" style="text-align:center;margin-top:14px">Copaz v31 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
   if (!CLOUD) segBind('#st-me');
   $('#st-save').onclick = () => act(async () => {
     const parents = { A: $('#st-a').value.trim() || 'Yo', B: $('#st-b').value.trim() || 'Otro' };
@@ -1903,7 +1924,7 @@ Object.assign(window, {
   go, renderAuth, calMove, modalDia, modalEvento, delEvento, modalEsquema, modalGasto, saldar, saldarTodo,
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
   modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,
-  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota, reenviarVerificacion, alternarTema,
+  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota, reenviarVerificacion, alternarTema, setTema,
   verImagen, verImagenDoc, verReciboGasto, verImagenMensaje,
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
