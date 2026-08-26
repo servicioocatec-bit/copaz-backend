@@ -187,6 +187,7 @@ export function buildRouter(broadcast) {
   r.use('/auth', makeIpLimiter(60 * 1000, 40));   // 40 intentos/min de login-registro-reset por IP
   r.use('/pay', makeIpLimiter(60 * 1000, 30));
   r.use('/admin', makeIpLimiter(60 * 1000, 60));
+  r.use('/ocr', makeIpLimiter(60 * 1000, 12));    // lectura por IA (tiene costo): máx 12/min por IP
 
   /* ------------------------------ AUTH ------------------------------ */
 
@@ -216,6 +217,8 @@ export function buildRouter(broadcast) {
     const necesitaVerif = mailReady();
     await q(`INSERT INTO users (id, email, password, name, family_id, role, email_verified, verify_token) VALUES ($1,$2,$3,$4,$5,'A',$6,$7)`,
       [userId, email.toLowerCase(), await hash(password), name, familyId, !necesitaVerif, necesitaVerif ? vtoken : null]);
+    await q(`INSERT INTO memberships (id, user_id, family_id, role) VALUES ($1,$2,$3,'A') ON CONFLICT (user_id, family_id) DO NOTHING`,
+      [uid(), userId, familyId]);
 
     const user = { id: userId, email: email.toLowerCase(), family_id: familyId, role: 'A' };
     if (necesitaVerif) {
@@ -283,18 +286,74 @@ export function buildRouter(broadcast) {
     const fam = (await q(`SELECT * FROM families WHERE invite_code=$1`, [String(inviteCode || '').toUpperCase()])).rows[0];
     if (!fam) return res.status(404).json({ error: 'Código de invitación no válido' });
 
-    const taken = (await q(`SELECT role FROM users WHERE family_id=$1`, [fam.id])).rows.map(x => x.role);
-    if (taken.includes('A') && taken.includes('B')) return res.status(409).json({ error: 'Esta familia ya tiene dos padres vinculados' });
-    const role = taken.includes('A') ? 'B' : 'A';
-
     const me = (await q(`SELECT * FROM users WHERE id=$1`, [req.user.uid])).rows[0];
-    await q(`UPDATE users SET family_id=$1, role=$2 WHERE id=$3`, [fam.id, role, me.id]);
-    const parents = { ...(fam.parents || {}), [role]: me.name };
-    await q(`UPDATE families SET parents=$1 WHERE id=$2`, [JSON.stringify(parents), fam.id]);
+    // ¿Ya soy miembro de este espacio? Entonces solo cambio a él.
+    const yaMem = (await q(`SELECT role FROM memberships WHERE user_id=$1 AND family_id=$2`, [me.id, fam.id])).rows[0];
+    let role;
+    if (yaMem) {
+      role = yaMem.role;
+    } else {
+      const taken = (await q(`SELECT role FROM memberships WHERE family_id=$1`, [fam.id])).rows.map(x => x.role);
+      if (taken.includes('A') && taken.includes('B')) return res.status(409).json({ error: 'Este espacio ya tiene dos padres vinculados' });
+      role = taken.includes('A') ? 'B' : 'A';
+      await q(`INSERT INTO memberships (id, user_id, family_id, role) VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, family_id) DO NOTHING`, [uid(), me.id, fam.id, role]);
+      const parents = { ...(fam.parents || {}), [role]: me.name };
+      await q(`UPDATE families SET parents=$1 WHERE id=$2`, [JSON.stringify(parents), fam.id]);
+    }
+    await q(`UPDATE users SET family_id=$1, role=$2 WHERE id=$3`, [fam.id, role, me.id]); // cambia el espacio activo
 
     const user = { id: me.id, email: me.email, family_id: fam.id, role };
     broadcast(fam.id, { type: 'sync' });
     res.json({ token: sign(user), user: { id: me.id, name: me.name, email: me.email, role } });
+  });
+
+  /* ------------------- ESPACIOS (multi-coparentalidad) ------------------- */
+  // Lista los espacios a los que pertenece el usuario.
+  r.get('/spaces', requireAuth, async (req, res) => {
+    const mems = (await q(`SELECT m.family_id, m.role, f.parents, f.invite_code, f.trial_until, f.premium_until
+      FROM memberships m JOIN families f ON f.id=m.family_id WHERE m.user_id=$1 ORDER BY m.created_at ASC`, [req.user.uid])).rows;
+    const now = Date.now();
+    const out = [];
+    for (const m of mems) {
+      const kids = (await q(`SELECT data->>'name' AS name FROM kids WHERE family_id=$1`, [m.family_id])).rows.map(k => k.name).filter(Boolean);
+      const parents = m.parents || {};
+      const otro = m.role === 'A' ? (parents.B || '') : (parents.A || '');
+      const premium = !!(m.premium_until && new Date(m.premium_until).getTime() > now);
+      const enTrial = !!(m.trial_until && new Date(m.trial_until).getTime() > now);
+      const estado = premium ? 'premium' : enTrial ? 'prueba' : 'bloqueado';
+      out.push({ familyId: m.family_id, role: m.role, active: m.family_id === req.user.family_id, kids, otro, inviteCode: m.invite_code, estado });
+    }
+    res.json({ spaces: out });
+  });
+
+  // Cambia el espacio activo (devuelve un token nuevo).
+  r.post('/family/switch', requireAuth, async (req, res) => {
+    const famId = req.body && req.body.familyId;
+    const mem = (await q(`SELECT role FROM memberships WHERE user_id=$1 AND family_id=$2`, [req.user.uid, famId])).rows[0];
+    if (!mem) return res.status(403).json({ error: 'No perteneces a ese espacio' });
+    const me = (await q(`SELECT email, name FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    await q(`UPDATE users SET family_id=$1, role=$2 WHERE id=$3`, [famId, mem.role, req.user.uid]);
+    const user = { id: req.user.uid, email: me.email, family_id: famId, role: mem.role };
+    res.json({ token: sign(user), user: { id: req.user.uid, name: me.name, email: me.email, role: mem.role } });
+  });
+
+  // Crea un espacio nuevo (otro hijo/otra pareja) y cambia a él.
+  r.post('/family/create-space', requireAuth, async (req, res) => {
+    const me = (await q(`SELECT email, name FROM users WHERE id=$1`, [req.user.uid])).rows[0];
+    const familyId = uid();
+    let invite = code();
+    while ((await q(`SELECT 1 FROM families WHERE invite_code=$1`, [invite])).rowCount) invite = code();
+    // La prueba completa de 30 días es solo para el primer espacio (registro).
+    // Los espacios adicionales tienen una prueba corta y luego requieren su propia suscripción.
+    const trialExtra = Math.max(0, Number(process.env.EXTRA_SPACE_TRIAL_DAYS || 7));
+    const trialUntil = new Date(Date.now() + trialExtra * 86400000).toISOString();
+    const calTok = crypto.randomBytes(12).toString('hex');
+    await q(`INSERT INTO families (id, invite_code, parents, trial_until, cal_token) VALUES ($1,$2,$3,$4,$5)`,
+      [familyId, invite, JSON.stringify({ A: me.name, B: '' }), trialUntil, calTok]);
+    await q(`INSERT INTO memberships (id, user_id, family_id, role) VALUES ($1,$2,$3,'A')`, [uid(), req.user.uid, familyId]);
+    await q(`UPDATE users SET family_id=$1, role='A' WHERE id=$2`, [familyId, req.user.uid]);
+    const user = { id: req.user.uid, email: me.email, family_id: familyId, role: 'A' };
+    res.json({ token: sign(user), user: { id: req.user.uid, name: me.name, email: me.email, role: 'A' }, inviteCode: invite });
   });
 
   /* --------------------------- ESTADO ------------------------------- */
@@ -386,7 +445,7 @@ export function buildRouter(broadcast) {
       famId = u && u.family_id;
     }
     if (!famId) return res.status(404).json({ error: 'Familia no encontrada (envía familyId o email)' });
-    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs']) {
+    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'memberships', 'messages', 'audit', 'payments', 'push_subs']) {
       await q(`DELETE FROM ${t} WHERE family_id=$1`, [famId]).catch(() => {});
     }
     await q(`DELETE FROM users WHERE family_id=$1`, [famId]).catch(() => {});
@@ -514,7 +573,7 @@ export function buildRouter(broadcast) {
     const u = (await q(`SELECT password FROM users WHERE id=$1`, [req.user.uid])).rows[0];
     if (!u || !(await compare(pass, u.password))) return res.status(401).json({ error: 'Contraseña incorrecta' });
     const fam = req.user.family_id;
-    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs']) {
+    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'memberships', 'messages', 'audit', 'payments', 'push_subs']) {
       await q(`DELETE FROM ${t} WHERE family_id=$1`, [fam]).catch(() => {});
     }
     await q(`DELETE FROM users WHERE family_id=$1`, [fam]).catch(() => {});

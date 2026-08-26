@@ -129,6 +129,21 @@ const Store = {
     if (this.mode === 'cloud') { await Cloud.patchFamily(patch); await this.refresh(); }
     else { Object.assign(this.state.family, patch); if (patch.parents) this.state.family.parents = patch.parents; this._save(); }
   },
+  // --- Espacios (multi-coparentalidad) ---
+  async switchSpace(familyId) {
+    const r = await Cloud.switchSpace(familyId);
+    Cloud.setToken(r.token); this.setUser(r.user);
+    if (Cloud.ws) { try { Cloud.ws.close(); } catch {} }
+    localStorage.removeItem('copaz.msgSeen');
+    await this.refresh(); this._connect();
+  },
+  async createSpace() {
+    const r = await Cloud.createSpace();
+    Cloud.setToken(r.token); this.setUser(r.user);
+    if (Cloud.ws) { try { Cloud.ws.close(); } catch {} }
+    await this.refresh(); this._connect();
+    return r.inviteCode;
+  },
 
   /* --- crear estado local nuevo (modo local) --- */
   createLocal({ a, b, kidsNames, scheduleType, currency, demo }) {
@@ -1504,7 +1519,8 @@ function modalAjustes() {
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
     <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
-    ${CLOUD ? `<button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
+    ${CLOUD ? `<button class="btn block outline" onclick="modalEspacios()" style="margin-top:10px">👨‍👩‍👧 Mis espacios (varios hijos/parejas)</button>
+    <button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
     <button class="btn block outline" onclick="modalLista()" style="margin-top:10px">🛒 Lista de necesidades</button>
     <button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
     <button class="btn block outline" onclick="modalActividad()" style="margin-top:10px">🕘 Actividad reciente</button>
@@ -1514,7 +1530,7 @@ function modalAjustes() {
     ${inviteRow}
     ${CLOUD ? `<button class="btn block danger" onclick="modalEliminarCuenta()" style="margin-top:10px">🗑️ Eliminar mi cuenta</button>` : ''}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
-    <p class="hint" style="text-align:center;margin-top:14px">Copaz v28 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
+    <p class="hint" style="text-align:center;margin-top:14px">Copaz v30 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
   if (!CLOUD) segBind('#st-me');
   $('#st-save').onclick = () => act(async () => {
     const parents = { A: $('#st-a').value.trim() || 'Yo', B: $('#st-b').value.trim() || 'Otro' };
@@ -1525,6 +1541,39 @@ function modalAjustes() {
   });
   const rst = $('#st-reset');
   if (rst) rst.onclick = () => { if (confirm('¿Borrar todos los datos? No se puede deshacer.')) { Store.wipeLocal(); closeSheet(); go('inicio'); render(); } };
+}
+
+/* =============================== ESPACIOS =========================== */
+function modalEspacios() {
+  if (!CLOUD) return toast('Disponible solo en modo nube');
+  openSheet('Mis espacios 👨‍👩‍👧', `<div id="sp-list"><div class="empty"><div class="ic">⏳</div><p>Cargando…</p></div></div>`);
+  act(async () => {
+    const { spaces } = await Cloud.spaces();
+    const badge = { premium: '<span class="badge green">Premium</span>', prueba: '<span class="badge blue">Prueba</span>', bloqueado: '<span class="badge rose">Bloqueado</span>' };
+    const rows = (spaces || []).map(s => {
+      const label = (s.kids && s.kids.length) ? s.kids.join(', ') : (s.otro ? 'Con ' + s.otro : 'Espacio sin vincular');
+      const sub = s.otro ? ('Con ' + esc(s.otro)) : 'Aún sin vincular al otro padre/madre';
+      return `<div class="list-row">
+        <div class="avatar" style="background:${s.active ? 'var(--teal-500)' : '#94a3b8'}">${s.active ? '✓' : '👪'}</div>
+        <div class="body"><div class="t">${esc(label)}${s.active ? ' <span class="badge teal">activo</span>' : ''} ${badge[s.estado] || ''}</div><div class="s">${sub} · código ${esc(s.inviteCode || '')}</div></div>
+        ${s.active ? '' : `<button class="btn sm" onclick="cambiarEspacio('${s.familyId}')">Entrar</button>`}</div>`;
+    }).join('');
+    $('#sp-list').innerHTML = `<p class="hint" style="margin-bottom:10px">Cada espacio es una coparentalidad aparte (por ejemplo, un hijo/a con distinta mamá o papá). El otro padre/madre solo ve el espacio al que lo invitas.</p>
+      <div class="card">${rows}</div>
+      <button class="btn block" style="margin-top:12px" onclick="nuevoEspacio()">＋ Nuevo espacio (otro hijo/a)</button>`;
+  });
+}
+const cambiarEspacio = (familyId) => act(async () => { await Store.switchSpace(familyId); closeSheet(); go('inicio'); render(); toast('Cambiaste de espacio ✓'); });
+function nuevoEspacio() {
+  act(async () => {
+    const invite = await Store.createSpace();
+    closeSheet(); localStorage.setItem('copaz.setupDone', '1'); go('hijos'); render();
+    openSheet('Nuevo espacio creado 🎉', `
+      <p class="hint" style="margin-bottom:12px">Estás en el nuevo espacio. Agrega al hijo/a en la pestaña Hijos y, cuando quieras, invita al otro padre/madre con este código:</p>
+      <div class="card tight" style="text-align:center"><div style="font-size:12px;color:var(--slate);text-transform:uppercase">Código de invitación</div>
+        <div style="font-size:26px;font-weight:800;letter-spacing:.12em;color:var(--teal-700)">${esc(invite)}</div></div>
+      <button class="btn block" style="margin-top:12px" onclick="closeSheet()">Entendido</button>`);
+  });
 }
 
 /* =============================== ACUERDOS =========================== */
@@ -1865,4 +1914,5 @@ Object.assign(window, {
   modalOverride, delOverride, modalRecurrente, delRecurrente,
   modalAcuerdos, modalAcuerdoNuevo, aceptarAcuerdo, delAcuerdo,
   modalLista, addLista, toggleLista, delLista, mostrarTour, cerrarTour,
+  modalEspacios, cambiarEspacio, nuevoEspacio,
 });
