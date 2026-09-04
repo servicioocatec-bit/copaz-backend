@@ -39,13 +39,6 @@
   </div>
 
   <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <div style="font-weight:700">📊 Métricas del negocio</div>
-      <button class="btn sm gray" onclick="cargarStats()">Cargar métricas</button></div>
-    <div id="stats"><span class="mut">Pulsa "Cargar métricas" para ver el resumen.</span></div>
-  </div>
-
-  <div class="card">
     <div style="font-weight:700;margin-bottom:10px">Activar Premium por correo</div>
     <div class="row2">
       <div style="flex:1;min-width:200px"><label>Correo del cliente</label><input id="actEmail" placeholder="cliente@correo.com" style="margin:0"></div>
@@ -130,32 +123,6 @@
       a.download='copaz-respaldo-'+new Date().toISOString().slice(0,10)+'.json'; a.click();
       URL.revokeObjectURL(a.href);
     }catch(e){ alert('Error de red: '+e.message); }
-  }
-  async function cargarStats(){
-    if(!key()){ alert('Ingresa la clave de administrador'); return; }
-    $('#stats').innerHTML='<span class="mut">Cargando…</span>';
-    try{
-      const r=await fetch(base()+'/api/admin/stats',{headers:{'x-admin-key':key()}});
-      const b=await r.json();
-      if(!r.ok){ $('#stats').innerHTML='<span class="mut">Error: '+(b.error||r.status)+'</span>'; return; }
-      const s=b.stats||{};
-      const clp=n=>'$'+Number(n||0).toLocaleString('es-CL');
-      const tile=(n,t)=>'<div style="flex:1;min-width:130px;background:#f7f9fb;border:1px solid #eef2f6;border-radius:12px;padding:12px"><div style="font-size:24px;font-weight:800;color:#0f766e">'+n+'</div><div class="mut">'+t+'</div></div>';
-      $('#stats').innerHTML='<div style="display:flex;gap:10px;flex-wrap:wrap">'
-        +tile(s.familias,'familias')
-        +tile(s.premium,'premium activo')
-        +tile(s.enPrueba,'en prueba')
-        +tile(s.bloqueadas,'bloqueadas')
-        +tile(s.conversion+'%','conversión a premium')
-        +tile(s.emparejamiento+'%','familias con los 2 padres')
-        +tile(s.signups7,'registros (7 días)')
-        +tile(s.signups30,'registros (30 días)')
-        +tile(clp(s.ingreso30),'ingresos (30 días)')
-        +tile(clp(s.ingresoTotal),'ingresos totales')
-        +tile(s.pagosPagados,'pagos confirmados')
-        +tile(s.pagosPend,'pagos pendientes')
-        +'</div>';
-    }catch(e){ $('#stats').innerHTML='<span class="mut">Error de red: '+e.message+'</span>'; }
   }
   async function cargarPagos(){
     if(!key()){ alert('Ingresa la clave de administrador'); return; }

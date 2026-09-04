@@ -6,7 +6,6 @@ import { q, familyState, exportAll } from './db.js';
 import { hash, compare, sign, requireAuth } from './auth.js';
 import { flowReady, flowPost } from './flow.js';
 import { enviarCorreo, correoBienvenida, correoReset, correoVerificacion, correoRecibo, correoPorVencer, correoVencido, mailReady } from './mail.js';
-import { cifrar } from './cripto.js';
 
 /* Groserías/insultos que se bloquean en los mensajes (también validado en el cliente). */
 function normGros(s) {
@@ -162,18 +161,11 @@ export function startBackups() {
       if (ultimoRespaldo === hoy || !horaOk) return;
       const data = await exportAll();
       const json = JSON.stringify(data);
+      const b64 = Buffer.from(json, 'utf8').toString('base64');
       const fams = (data.tablas.families || []).length, users = (data.tablas.users || []).length;
-      const frase = (process.env.BACKUP_PASSPHRASE || '').trim();
-      // Si hay frase, el respaldo viaja CIFRADO (recomendado: contiene datos de menores).
-      const cuerpo = frase ? cifrar(json, frase) : json;
-      const b64 = Buffer.from(cuerpo, 'utf8').toString('base64');
-      const filename = frase ? `copaz-respaldo-${hoy}.json.enc` : `copaz-respaldo-${hoy}.json`;
-      const nota = frase
-        ? `<p>Adjunto: <b>${filename}</b> (cifrado con AES-256-GCM). Descífralo con tu frase secreta usando <code>node backend/descifrar-respaldo.mjs</code>.</p>`
-        : `<p>Adjunto: <b>${filename}</b>. Guárdalo en un lugar seguro. (Para que viaje cifrado, define <code>BACKUP_PASSPHRASE</code>.)</p>`;
       const ok = await enviarCorreo(destino, `Respaldo Copaz — ${hoy}`,
-        `<p>Respaldo automático de la base de datos de Copaz.</p><p><b>${fams}</b> familias · <b>${users}</b> usuarios.</p>${nota}`,
-        [{ filename, content: b64 }]);
+        `<p>Respaldo automático de la base de datos de Copaz.</p><p><b>${fams}</b> familias · <b>${users}</b> usuarios.</p><p>Adjunto: copaz-respaldo-${hoy}.json. Guárdalo en un lugar seguro.</p>`,
+        [{ filename: `copaz-respaldo-${hoy}.json`, content: b64 }]);
       if (ok) ultimoRespaldo = hoy;
     } catch (e) { /* silencioso */ }
   };
@@ -473,43 +465,6 @@ export function buildRouter(broadcast) {
       out.push({ order: p.order, plan: p.plan, amount: p.amount, status: p.status, fecha: p.created_at, emails: us.map(u => u.email).join(', ') });
     }
     res.json({ payments: out });
-  });
-
-  // Métricas de negocio para el panel admin (activación, conversión, ingresos).
-  r.get('/admin/stats', async (req, res) => {
-    const key = req.headers['x-admin-key'];
-    if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'No autorizado' });
-    const ahora = Date.now();
-    const t = (v) => v ? new Date(v).getTime() : 0;
-    // Se traen filas mínimas y se agrega en JS (portable y robusto).
-    const fams = (await q(`SELECT id, premium_until, trial_until FROM families`)).rows;
-    const users = (await q(`SELECT family_id, created_at FROM users`)).rows;
-    const pays = (await q(`SELECT amount, status, created_at FROM payments`)).rows;
-    const familias = fams.length;
-    const usuarios = users.length;
-    let premium = 0, enPrueba = 0;
-    for (const f of fams) {
-      if (t(f.premium_until) > ahora) premium++;
-      else if (t(f.trial_until) > ahora) enPrueba++;
-    }
-    const bloqueadas = Math.max(0, familias - premium - enPrueba);
-    const cuentaPorFam = {};
-    for (const u of users) if (u.family_id) cuentaPorFam[u.family_id] = (cuentaPorFam[u.family_id] || 0) + 1;
-    const emparejadas = Object.values(cuentaPorFam).filter(c => c >= 2).length;
-    const signups7 = users.filter(u => t(u.created_at) > ahora - 7 * 86400000).length;
-    const signups30 = users.filter(u => t(u.created_at) > ahora - 30 * 86400000).length;
-    const pagados = pays.filter(p => p.status === 'paid');
-    const pagosPagados = pagados.length;
-    const pagosPend = pays.length - pagosPagados;
-    const ingresoTotal = pagados.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    const ingreso30 = pagados.filter(p => t(p.created_at) > ahora - 30 * 86400000).reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    const conversion = familias ? Math.round((premium / familias) * 1000) / 10 : 0;
-    const emparejamiento = familias ? Math.round((emparejadas / familias) * 1000) / 10 : 0;
-    res.json({ stats: {
-      familias, usuarios, premium, enPrueba, bloqueadas, emparejadas,
-      signups7, signups30, pagosPagados, pagosPend, ingresoTotal, ingreso30,
-      conversion, emparejamiento,
-    } });
   });
 
   // Crea el pago en Flow y devuelve la URL a la que redirigir al usuario.
