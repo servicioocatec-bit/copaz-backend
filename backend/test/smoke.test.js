@@ -199,29 +199,6 @@ try {
   r = await api('GET', '/api/state', null, tokenB);
   ok(r.body.overrides.length === 1 && r.body.recurring.length === 1 && r.body.agreements.length === 1 && r.body.shopping.length === 1, 'Las nuevas entidades se sincronizan');
 
-  // 19d. Espacios múltiples (multi-coparentalidad)
-  r = await api('GET', '/api/spaces', null, tokenA);
-  ok(r.status === 200 && r.body.spaces.length === 1 && r.body.spaces[0].active === true, 'Pedro tiene 1 espacio activo');
-  r = await api('POST', '/api/family/create-space', {}, tokenA);
-  ok(r.status === 200 && r.body.token && r.body.inviteCode, 'Pedro crea un segundo espacio');
-  const tokenA2 = r.body.token;
-  r = await api('GET', '/api/spaces', null, tokenA2);
-  ok(r.body.spaces.length === 2, 'Ahora Pedro tiene 2 espacios');
-  const activo2 = r.body.spaces.find(s => s.active);
-  ok(activo2 && activo2.kids.length === 0, 'El nuevo espacio está vacío y activo');
-  r = await api('POST', '/api/kids', { name: 'Benja' }, tokenA2);
-  ok(r.status === 200, 'Agrega un hijo solo en el nuevo espacio');
-  r = await api('GET', '/api/state', null, tokenA2);
-  ok(r.body.kids.length === 1 && r.body.kids[0].name === 'Benja', 'El nuevo espacio ve solo a Benja');
-  // Volver al primer espacio y comprobar aislamiento
-  const primer = (await api('GET', '/api/spaces', null, tokenA2)).body.spaces.find(s => !s.active);
-  r = await api('POST', '/api/family/switch', { familyId: primer.familyId }, tokenA2);
-  ok(r.status === 200 && r.body.token, 'Cambia de vuelta al primer espacio');
-  r = await api('GET', '/api/state', null, r.body.token);
-  ok(!r.body.kids.some(k => k.name === 'Benja'), 'El primer espacio NO ve al hijo del otro espacio (aislado)');
-  r = await api('POST', '/api/family/switch', { familyId: 'inexistente' }, tokenA2);
-  ok(r.status === 403, 'No se puede entrar a un espacio ajeno');
-
   // 19c. Recordatorios configurables
   r = await api('PATCH', '/api/family', { reminderDays: 3 }, tokenA);
   ok(r.status === 200, 'Actualiza días de aviso de recordatorio');

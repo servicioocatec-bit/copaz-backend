@@ -9,7 +9,7 @@ import cors from 'cors';
 import { WebSocketServer } from 'ws';
 import { initPool, migrate } from './db.js';
 import { verify } from './auth.js';
-import { buildRouter, startReminders, startBackups } from './routes.js';
+import { buildRouter, startReminders, startBackups, startExpiryNotices } from './routes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Carpeta con la app (frontend). Se sirve desde el mismo servidor: una sola URL.
@@ -82,8 +82,9 @@ async function start() {
   attachWebSocket(server);
   const port = process.env.PORT || 3000;
   server.listen(port, () => console.log(`Copaz API escuchando en :${port}`));
-  startReminders(); // recordatorios automáticos (eventos y cambios de custodia)
-  startBackups();   // respaldo diario de la base por correo (si BACKUP_EMAIL está configurado)
+  startReminders();      // recordatorios automáticos (eventos y cambios de custodia)
+  startBackups();        // respaldo diario de la base por correo (si BACKUP_EMAIL está configurado)
+  startExpiryNotices();  // avisos de "Premium por vencer / vencido" (si hay correo configurado)
 }
 
 // Solo arranca si se ejecuta directamente (no al importar en pruebas).

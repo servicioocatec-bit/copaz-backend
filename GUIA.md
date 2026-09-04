@@ -59,7 +59,16 @@ ADMIN_KEY=<cadena larga y secreta, para el panel admin>
 RESEND_API_KEY=<tu llave de Resend, para correos>   (opcional)
 EMAIL_FROM=Copaz <onboarding@resend.dev>
 TRIAL_DAYS=30
+
+# Opcionales (activan funciones extra):
+ANTHROPIC_API_KEY=<llave de console.anthropic.com>   # activa el "leer con foto" (OCR de evaluaciones y horario)
+OCR_MODEL=                                            # opcional: fuerza un modelo de visión concreto
+BACKUP_EMAIL=<tu correo>                              # respaldo diario automático de la base (requiere RESEND_API_KEY)
+PREMIUM_NOTICE_DAYS=3                                 # días antes de vencer para avisar de renovación
 ```
+
+> Sin `ANTHROPIC_API_KEY` la lectura por foto sale como "no configurada" (el resto de la app funciona).
+> Sin `BACKUP_EMAIL` no hay respaldo automático por correo, pero igual lo descargas a mano en `admin.html`.
 
 ### 3. Conectar la app al backend
 En `api-client.js`, `API_BASE` ya apunta a tu backend de Railway. Los links de Flow (`FLOW_ANUAL`, `FLOW_MENSUAL`) son el respaldo por si el API falla.

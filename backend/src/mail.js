@@ -49,3 +49,14 @@ export const correoRecibo = ({ plan, monto, hasta, orden }) => wrap('Recibo de t
      <tr><td style="padding:8px 0;color:#64748b">N° de orden</td><td style="padding:8px 0;text-align:right">${orden}</td></tr>
    </table>
    <p style="color:#64748b;font-size:13px">El pago fue procesado por Flow. Si necesitas una boleta/factura, responde a este correo.</p>`);
+
+export const correoPorVencer = ({ nombre, dias, hasta, link }) => wrap('Tu Premium está por vencer',
+  `<p>Hola${nombre ? ' ' + nombre : ''}, tu suscripción <b>Premium de Copaz</b> vence ${dias <= 0 ? 'hoy' : (dias === 1 ? 'mañana' : 'en ' + dias + ' días')} (${hasta}).</p>
+   <p>Renueva con un clic para no perder el acceso al calendario, los gastos y los mensajes compartidos.</p>
+   <p style="text-align:center;margin:22px 0"><a href="${link}" style="background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Renovar mi Premium</a></p>
+   <p style="color:#64748b;font-size:13px">Recuerda: el pago es por una sola vez, sin cobro automático.</p>`);
+
+export const correoVencido = ({ nombre, link }) => wrap('Tu Premium venció',
+  `<p>Hola${nombre ? ' ' + nombre : ''}, tu <b>Premium de Copaz</b> venció. Tus datos siguen guardados y seguros, pero la app quedó en modo de solo lectura hasta que renueves.</p>
+   <p style="text-align:center;margin:22px 0"><a href="${link}" style="background:#0d9488;color:#fff;text-decoration:none;padding:12px 22px;border-radius:12px;font-weight:700">Reactivar mi Premium</a></p>
+   <p style="color:#64748b;font-size:13px">Un solo pago y vuelves a tener todo activo al instante.</p>`);

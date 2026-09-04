@@ -20,7 +20,8 @@ const today = () => iso(new Date());
 const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const DOW   = ['dom','lun','mar','mié','jue','vie','sáb'];
 
-const money = n => new Intl.NumberFormat('es-MX', { style: 'currency', currency: (F() && F().currency) || 'MXN' }).format(n || 0);
+const MONEDA_LOCALE = { CLP:'es-CL', MXN:'es-MX', USD:'en-US', EUR:'es-ES', COP:'es-CO', ARS:'es-AR' };
+const money = n => { const cur = (F() && F().currency) || 'CLP'; return new Intl.NumberFormat(MONEDA_LOCALE[cur] || 'es-CL', { style: 'currency', currency: cur }).format(n || 0); };
 function fechaLarga(s) { const [y,m,d] = s.split('-').map(Number); const dt = new Date(y, m-1, d); return `${DOW[dt.getDay()]} ${d} ${MESES[m-1]}`; }
 function diffDias(a, b) { return Math.round((new Date(b+'T00:00') - new Date(a+'T00:00')) / 86400000); }
 function toast(msg) {
@@ -128,21 +129,6 @@ const Store = {
   async patchFamily(patch) {
     if (this.mode === 'cloud') { await Cloud.patchFamily(patch); await this.refresh(); }
     else { Object.assign(this.state.family, patch); if (patch.parents) this.state.family.parents = patch.parents; this._save(); }
-  },
-  // --- Espacios (multi-coparentalidad) ---
-  async switchSpace(familyId) {
-    const r = await Cloud.switchSpace(familyId);
-    Cloud.setToken(r.token); this.setUser(r.user);
-    if (Cloud.ws) { try { Cloud.ws.close(); } catch {} }
-    localStorage.removeItem('copaz.msgSeen');
-    await this.refresh(); this._connect();
-  },
-  async createSpace() {
-    const r = await Cloud.createSpace();
-    Cloud.setToken(r.token); this.setUser(r.user);
-    if (Cloud.ws) { try { Cloud.ws.close(); } catch {} }
-    await this.refresh(); this._connect();
-    return r.inviteCode;
   },
 
   /* --- crear estado local nuevo (modo local) --- */
@@ -254,28 +240,8 @@ const currentRoute = () => { const h = location.hash.replace('#/', '').split('/'
 const go = (r) => { location.hash = '#/' + r; };
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', boot);
-/* Modo de tema: 'light' | 'dark' | 'auto'. En 'auto' sigue el modo del teléfono
-   (que cambia de día/noche) y, si no lo indica, usa la hora (19:00–06:59 = oscuro). */
-function temaEfectivo(mode) {
-  if (mode === 'dark') return 'dark';
-  if (mode === 'light') return 'light';
-  const mm = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-  if (mm && mm.media !== 'not all') return mm.matches ? 'dark' : 'light';
-  const h = new Date().getHours(); return (h >= 19 || h < 7) ? 'dark' : 'light';
-}
-function aplicarTema() {
-  const mode = localStorage.getItem('copaz.theme') || 'light';
-  if (temaEfectivo(mode) === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-  else document.documentElement.removeAttribute('data-theme');
-}
-function setTema(mode) {
-  localStorage.setItem('copaz.theme', mode); aplicarTema(); closeSheet(); render();
-  toast(mode === 'dark' ? '🌙 Modo oscuro' : mode === 'light' ? '☀️ Modo claro' : '🌗 Automático (día/noche)');
-}
-function alternarTema() { const m = localStorage.getItem('copaz.theme'); setTema(m === 'dark' ? 'light' : 'dark'); }
-// Reaccionar a cambios del sistema y revisar la hora cada 15 min cuando está en automático.
-if (window.matchMedia) { try { window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if ((localStorage.getItem('copaz.theme') || 'light') === 'auto') aplicarTema(); }); } catch {} }
-setInterval(() => { if ((localStorage.getItem('copaz.theme') || 'light') === 'auto') aplicarTema(); }, 15 * 60 * 1000);
+function aplicarTema() { const t = localStorage.getItem('copaz.theme'); if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark'); else document.documentElement.removeAttribute('data-theme'); }
+function alternarTema() { const nuevo = localStorage.getItem('copaz.theme') === 'dark' ? 'light' : 'dark'; localStorage.setItem('copaz.theme', nuevo); aplicarTema(); closeSheet(); render(); toast(nuevo === 'dark' ? '🌙 Modo oscuro' : '☀️ Modo claro'); }
 async function boot() { aplicarTema(); await Store.init(); render(); if (localStorage.getItem('copaz.pushOn')) enablePush(false).catch(() => {}); }
 
 /* ================================ RENDER =============================== */
@@ -375,7 +341,7 @@ function modalConfigInicial(demo) {
         <option value="alterna">Día por medio</option>
       </select></div>
     <div class="field"><label>Moneda</label>
-      <select id="cfg-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+      <select id="cfg-cur">${['CLP','MXN','USD','EUR','COP','ARS'].map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
     <button class="btn block" id="cfg-go">Crear mi espacio</button>
   `);
   $('#cfg-go').onclick = () => {
@@ -516,7 +482,7 @@ function renderSetup() {
       <div class="field"><label>¿Quién tiene a los niños primero este mes?</label>
         <div class="seg" id="su-first"><button data-v="A" class="on">Yo</button><button data-v="B">El otro padre/madre</button></div></div>
       <div class="field"><label>Moneda</label>
-        <select id="su-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+        <select id="su-cur">${['CLP','MXN','USD','EUR','COP','ARS'].map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
       <button class="btn block" id="su-go">Guardar y continuar</button>
       <button class="btn ghost block" id="su-skip" style="margin-top:10px">Saltar por ahora</button>
     </div></div>`;
@@ -1077,6 +1043,108 @@ function exportarColegioPDF(kidId) {
   if (!horario && !evTable) return toast('Este hijo no tiene horario ni evaluaciones');
   imprimirReporte(`Colegio · ${k.name}`, `<p class="mut">${esc(k.school || '')}${k.grade ? ' · ' + esc(k.grade) : ''}</p>${horario}${evTable}${profes}`);
 }
+
+/* ============ INFORME CONSOLIDADO (para abogado / tribunal) ============ */
+/* Reúne en un solo documento, dentro de un rango de fechas: resumen de custodia
+   (noches por cada padre, incluye intercambios y excepciones), historial de
+   mensajes, gastos y reembolsos, bitácora y — en modo nube — el registro de
+   actividad. Sale por el diálogo de imprimir del navegador → "Guardar como PDF". */
+function modalInforme() {
+  const hasta = today();
+  const desde = iso(new Date(Date.now() - 90 * 86400000));
+  openSheet('Informe para abogado / tribunal 📄', `
+    <p class="hint" style="margin-bottom:12px">Genera un documento formal con todo lo registrado en un período. Útil como respaldo ante tu abogado/a o el tribunal de familia.</p>
+    <div class="row2">
+      <div class="field"><label>Desde</label><input id="inf-desde" type="date" value="${desde}"></div>
+      <div class="field"><label>Hasta</label><input id="inf-hasta" type="date" value="${hasta}"></div>
+    </div>
+    <label style="display:block;font-weight:600;font-size:13px;color:var(--slate);margin:6px 0 4px">Incluir en el informe:</label>
+    <label class="chk"><input type="checkbox" id="inf-cust" checked> Resumen de custodia (noches por cada padre)</label>
+    <label class="chk"><input type="checkbox" id="inf-msg" checked> Historial de mensajes</label>
+    <label class="chk"><input type="checkbox" id="inf-gas" checked> Gastos y reembolsos</label>
+    <label class="chk"><input type="checkbox" id="inf-bit" checked> Bitácora</label>
+    ${CLOUD ? `<label class="chk"><input type="checkbox" id="inf-act" checked> Registro de actividad (auditoría)</label>` : ''}
+    <button class="btn block" id="inf-go" style="margin-top:12px">📄 Generar informe (PDF)</button>
+    <p class="hint" style="text-align:center;margin-top:10px">Se abre el diálogo de impresión: elige "Guardar como PDF".</p>`);
+  $('#inf-go').onclick = () => act(async () => {
+    const d1 = $('#inf-desde').value, d2 = $('#inf-hasta').value;
+    if (!d1 || !d2 || d1 > d2) return toast('Revisa el rango de fechas');
+    await exportarInformeLegal(d1, d2, {
+      cust: $('#inf-cust').checked, msg: $('#inf-msg').checked, gas: $('#inf-gas').checked,
+      bit: $('#inf-bit').checked, act: !!($('#inf-act') && $('#inf-act').checked),
+    });
+  });
+}
+async function exportarInformeLegal(desde, hasta, opts) {
+  const enRango = (d) => d && d >= desde && d <= hasta;
+  const fLarga = (s) => { try { return fechaLarga(s); } catch { return s; } };
+  let cuerpo = `<p style="margin-top:12px"><b>Período del informe:</b> ${fLarga(desde)} al ${fLarga(hasta)}.</p>
+    <p class="mut">Documento generado por los propios padres desde la aplicación Copaz. Los mensajes son un registro inmutable (no se pueden editar ni borrar).</p>`;
+
+  // --- Resumen de custodia: cuenta noches por padre en el rango (incluye intercambios y excepciones) ---
+  if (opts.cust) {
+    let nA = 0, nB = 0, dias = 0;
+    for (let t = new Date(desde + 'T00:00'); iso(t) <= hasta && dias < 800; t = new Date(t.getTime() + 86400000)) {
+      const who = custodioDe(iso(t)); if (who === 'A') nA++; else if (who === 'B') nB++; dias++;
+    }
+    const totales = nA + nB || 1;
+    const overrides = (D().overrides || []).filter(o => enRango(o.start || o.date) || enRango(o.end || o.start || o.date));
+    const ovRows = overrides.map(o => `<tr><td>${fLarga(o.start || o.date)}${(o.end && o.end !== (o.start || o.date)) ? ' al ' + fLarga(o.end) : ''}</td><td>${esc(o.title || o.motivo || 'Excepción')}</td><td>${esc(nombre(o.who))}</td></tr>`).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:22px">1. Resumen de custodia</h2>
+      <p>Esquema vigente: <b>${esc(etiquetaEsquema((F().schedule || {}).type))}</b>.</p>
+      <table><tr><th>Padre / madre</th><th style="text-align:right">Noches</th><th style="text-align:right">% del período</th></tr>
+        <tr><td>${esc(nombre('A'))}</td><td style="text-align:right">${nA}</td><td style="text-align:right">${Math.round(nA / totales * 100)}%</td></tr>
+        <tr><td>${esc(nombre('B'))}</td><td style="text-align:right">${nB}</td><td style="text-align:right">${Math.round(nB / totales * 100)}%</td></tr>
+      </table>
+      ${overrides.length ? `<p style="margin-top:10px;font-weight:700">Excepciones registradas en el período (feriados/vacaciones):</p>
+      <table><tr><th>Fecha(s)</th><th>Motivo</th><th>Con quién</th></tr>${ovRows}</table>` : '<p class="mut" style="margin-top:8px">Sin excepciones registradas en el período.</p>'}`;
+  }
+
+  // --- Mensajes ---
+  if (opts.msg) {
+    const msgs = (D().messages || []).filter(m => enRango(iso(new Date(m.ts))));
+    const rows = msgs.map(m => `<tr><td style="white-space:nowrap">${new Date(m.ts).toLocaleString('es-CL')}</td><td>${esc(nombre(m.from))}</td><td>${esc(m.text || '')}${m.image ? ' <i>[foto adjunta]</i>' : ''}</td></tr>`).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">2. Historial de mensajes <span class="mut">(${msgs.length})</span></h2>
+      ${msgs.length ? `<table><tr><th>Fecha y hora</th><th>De</th><th>Mensaje</th></tr>${rows}</table>` : '<p class="mut">Sin mensajes en el período.</p>'}`;
+  }
+
+  // --- Gastos y reembolsos ---
+  if (opts.gas) {
+    const gastos = [...(D().expenses || [])].filter(e => enRango(e.date)).sort((a, b) => a.date.localeCompare(b.date));
+    const abonos = (D().settlements || []).filter(s => enRango(s.date || ''));
+    let totA = 0, totB = 0;
+    gastos.forEach(e => { if (e.payer === 'A') totA += Number(e.amount) || 0; else totB += Number(e.amount) || 0; });
+    const gRows = gastos.map(e => { const kid = (D().kids || []).find(k => k.id === e.kid); return `<tr><td>${fLarga(e.date)}</td><td>${esc(e.title)}</td><td>${esc(e.cat || '')}${kid ? ' · ' + esc(kid.name) : ''}</td><td>${esc(nombre(e.payer))}</td><td style="text-align:right">${money(e.amount)}</td><td>${e.settled ? 'Sí' : 'No'}</td></tr>`; }).join('');
+    const aRows = abonos.map(s => `<tr><td>${fLarga(s.date || '')}</td><td>Abono / reembolso</td><td>${esc(s.note || '')}</td><td>${esc(nombre(s.from || (s.to === 'A' ? 'B' : 'A')))} → ${esc(nombre(s.to))}</td><td style="text-align:right">${money(s.amount)}</td><td>—</td></tr>`).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">3. Gastos y reembolsos <span class="mut">(${gastos.length})</span></h2>
+      <p class="mut">Total pagado en el período — ${esc(nombre('A'))}: <b>${money(totA)}</b> · ${esc(nombre('B'))}: <b>${money(totB)}</b>.</p>
+      ${(gastos.length || abonos.length) ? `<table><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Pagó</th><th style="text-align:right">Monto</th><th>Saldado</th></tr>${gRows}${aRows}</table>` : '<p class="mut">Sin gastos en el período.</p>'}`;
+  }
+
+  // --- Bitácora ---
+  if (opts.bit) {
+    const notas = [...(D().journal || [])].filter(j => enRango(j.date)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const rows = notas.map(j => { const kid = (D().kids || []).find(k => k.id === j.kid); return `<tr><td style="white-space:nowrap">${fLarga(j.date)}</td><td>${esc(nombre(j.author))}</td><td>${kid ? esc(kid.name) : '—'}</td><td>${esc(j.text || '')}</td></tr>`; }).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">4. Bitácora <span class="mut">(${notas.length})</span></h2>
+      ${notas.length ? `<table><tr><th>Fecha</th><th>Autor</th><th>Hijo/a</th><th>Nota</th></tr>${rows}</table>` : '<p class="mut">Sin notas en el período.</p>'}`;
+  }
+
+  // --- Registro de actividad (auditoría), solo en modo nube ---
+  if (opts.act && CLOUD) {
+    try {
+      const { audit } = await Cloud.audit();
+      const acc = { crear: 'agregó', editar: 'editó', borrar: 'eliminó' };
+      const filas = (audit || []).filter(a => enRango(iso(new Date(Number(a.ts))))).map(a =>
+        `<tr><td style="white-space:nowrap">${new Date(Number(a.ts)).toLocaleString('es-CL')}</td><td>${esc(nombre(a.actor))}</td><td>${esc(acc[a.action] || a.action)} ${esc(a.detail || '')}</td></tr>`).join('');
+      cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">5. Registro de actividad</h2>
+        ${filas ? `<table><tr><th>Fecha y hora</th><th>Quién</th><th>Acción</th></tr>${filas}</table>` : '<p class="mut">Sin actividad registrada en el período.</p>'}`;
+    } catch { /* si falla la carga, se omite esta sección */ }
+  }
+
+  cuerpo += `<p class="mut" style="margin-top:26px;border-top:1px solid #e2e8f0;padding-top:10px">Informe generado con Copaz — coparentalidad en paz. copaz.app</p>`;
+  closeSheet();
+  imprimirReporte('Informe de coparentalidad', cuerpo);
+}
 const saldar = (id) => act(async () => { const e = D().expenses.find(x => x.id === id); if (e) { await Store.update('expenses', id, { ...e, settled: true }); render(); toast('Marcado como saldado'); } });
 const saldarTodo = () => act(async () => { for (const e of D().expenses.filter(x => !x.settled)) await Store.update('expenses', e.id, { ...e, settled: true }); render(); toast('Todo saldado ✓'); });
 
@@ -1534,14 +1602,13 @@ function modalAjustes() {
     ${!CLOUD ? `<div class="field"><label>¿Quién eres tú?</label><div class="seg" id="st-me">
       <button data-v="A" class="${meRole()==='A'?'on':''}">${esc(f.parents.A||'A')}</button>
       <button data-v="B" class="${meRole()==='B'?'on':''}">${esc(f.parents.B||'B')}</button></div></div>` : ''}
-    <div class="row2"><div class="field"><label>Moneda</label><select id="st-cur">${['MXN','USD','EUR','COP','ARS','CLP'].map(c => `<option value="${c}" ${f.currency===c?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="row2"><div class="field"><label>Moneda</label><select id="st-cur">${['CLP','MXN','USD','EUR','COP','ARS'].map(c => `<option value="${c}" ${f.currency===c?'selected':''}>${c}</option>`).join('')}</select></div>
       <div class="field"><label>Aviso de recordatorios</label><select id="st-rem">${[0,1,2,3].map(n => `<option value="${n}" ${(f.reminderDays==null?1:f.reminderDays)===n?'selected':''}>${n===0?'El mismo día':n+' día'+(n>1?'s':'')+' antes'}</option>`).join('')}</select></div></div>
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
-    <div class="field" style="margin-top:10px"><label>Apariencia</label><select id="st-theme" onchange="setTema(this.value)">
-      ${[['light', '☀️ Claro'], ['dark', '🌙 Oscuro'], ['auto', '🌗 Automático (día/noche)']].map(([v, l]) => `<option value="${v}" ${(localStorage.getItem('copaz.theme') || 'light') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-    ${CLOUD ? `<button class="btn block outline" onclick="modalEspacios()" style="margin-top:10px">👨‍👩‍👧 Mis espacios (varios hijos/parejas)</button>
-    <button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
+    <button class="btn block outline" onclick="modalInforme()" style="margin-top:10px">📄 Informe para abogado/tribunal</button>
+    <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
+    ${CLOUD ? `<button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
     <button class="btn block outline" onclick="modalLista()" style="margin-top:10px">🛒 Lista de necesidades</button>
     <button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
     <button class="btn block outline" onclick="modalActividad()" style="margin-top:10px">🕘 Actividad reciente</button>
@@ -1551,7 +1618,7 @@ function modalAjustes() {
     ${inviteRow}
     ${CLOUD ? `<button class="btn block danger" onclick="modalEliminarCuenta()" style="margin-top:10px">🗑️ Eliminar mi cuenta</button>` : ''}
     ${!CLOUD ? `<button class="btn block danger" id="st-reset" style="margin-top:10px">Borrar todo y reiniciar</button>` : ''}
-    <p class="hint" style="text-align:center;margin-top:14px">Copaz v31 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
+    <p class="hint" style="text-align:center;margin-top:14px">Copaz v28 · ${CLOUD ? 'Modo nube (sincronizado)' : 'Modo local (este dispositivo)'}</p>`);
   if (!CLOUD) segBind('#st-me');
   $('#st-save').onclick = () => act(async () => {
     const parents = { A: $('#st-a').value.trim() || 'Yo', B: $('#st-b').value.trim() || 'Otro' };
@@ -1562,39 +1629,6 @@ function modalAjustes() {
   });
   const rst = $('#st-reset');
   if (rst) rst.onclick = () => { if (confirm('¿Borrar todos los datos? No se puede deshacer.')) { Store.wipeLocal(); closeSheet(); go('inicio'); render(); } };
-}
-
-/* =============================== ESPACIOS =========================== */
-function modalEspacios() {
-  if (!CLOUD) return toast('Disponible solo en modo nube');
-  openSheet('Mis espacios 👨‍👩‍👧', `<div id="sp-list"><div class="empty"><div class="ic">⏳</div><p>Cargando…</p></div></div>`);
-  act(async () => {
-    const { spaces } = await Cloud.spaces();
-    const badge = { premium: '<span class="badge green">Premium</span>', prueba: '<span class="badge blue">Prueba</span>', bloqueado: '<span class="badge rose">Bloqueado</span>' };
-    const rows = (spaces || []).map(s => {
-      const label = (s.kids && s.kids.length) ? s.kids.join(', ') : (s.otro ? 'Con ' + s.otro : 'Espacio sin vincular');
-      const sub = s.otro ? ('Con ' + esc(s.otro)) : 'Aún sin vincular al otro padre/madre';
-      return `<div class="list-row">
-        <div class="avatar" style="background:${s.active ? 'var(--teal-500)' : '#94a3b8'}">${s.active ? '✓' : '👪'}</div>
-        <div class="body"><div class="t">${esc(label)}${s.active ? ' <span class="badge teal">activo</span>' : ''} ${badge[s.estado] || ''}</div><div class="s">${sub} · código ${esc(s.inviteCode || '')}</div></div>
-        ${s.active ? '' : `<button class="btn sm" onclick="cambiarEspacio('${s.familyId}')">Entrar</button>`}</div>`;
-    }).join('');
-    $('#sp-list').innerHTML = `<p class="hint" style="margin-bottom:10px">Cada espacio es una coparentalidad aparte (por ejemplo, un hijo/a con distinta mamá o papá). El otro padre/madre solo ve el espacio al que lo invitas.</p>
-      <div class="card">${rows}</div>
-      <button class="btn block" style="margin-top:12px" onclick="nuevoEspacio()">＋ Nuevo espacio (otro hijo/a)</button>`;
-  });
-}
-const cambiarEspacio = (familyId) => act(async () => { await Store.switchSpace(familyId); closeSheet(); go('inicio'); render(); toast('Cambiaste de espacio ✓'); });
-function nuevoEspacio() {
-  act(async () => {
-    const invite = await Store.createSpace();
-    closeSheet(); localStorage.setItem('copaz.setupDone', '1'); go('hijos'); render();
-    openSheet('Nuevo espacio creado 🎉', `
-      <p class="hint" style="margin-bottom:12px">Estás en el nuevo espacio. Agrega al hijo/a en la pestaña Hijos y, cuando quieras, invita al otro padre/madre con este código:</p>
-      <div class="card tight" style="text-align:center"><div style="font-size:12px;color:var(--slate);text-transform:uppercase">Código de invitación</div>
-        <div style="font-size:26px;font-weight:800;letter-spacing:.12em;color:var(--teal-700)">${esc(invite)}</div></div>
-      <button class="btn block" style="margin-top:12px" onclick="closeSheet()">Entendido</button>`);
-  });
 }
 
 /* =============================== ACUERDOS =========================== */
@@ -1755,6 +1789,7 @@ function modalAyuda() {
     ['¿Cómo funciona el pago?', 'Tienes 30 días gratis. Luego, desde “Planes y suscripción” pagas con Flow (mensual o anual). El Premium se activa solo al confirmarse el pago y te llega un recibo por correo.'],
     ['¿Puedo cancelar o eliminar mis datos?', 'El cobro no es automático: si no renuevas, simplemente se vence. Puedes borrar toda tu cuenta y datos en Ajustes → “Eliminar mi cuenta”.'],
     ['¿Es privado?', 'Solo tú y el otro padre/madre vinculado ven la información de su familia. Nadie más tiene acceso.'],
+    ['¿Puedo generar un informe para mi abogado o el tribunal?', 'Sí. En Ajustes → “📄 Informe para abogado/tribunal” eliges un período y generas un PDF con el resumen de custodia (noches por cada padre), los mensajes, los gastos, la bitácora y el registro de actividad. Los mensajes son un registro inmutable.'],
   ];
   openSheet('Ayuda y soporte ❓', `
     ${faqs.map(([q, a]) => `<details style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px">
@@ -1836,17 +1871,17 @@ function modalPlanes() {
   }
   openSheet('Copaz Premium ✨', `
     ${estado}
-    <p class="hint" style="margin-bottom:14px">Precio por cada padre. Aún más barato que OurFamilyWizard y las apps líderes.</p>
+    <p class="hint" style="margin-bottom:14px">Un solo pago para toda la familia (cubre a los dos padres). Aún más barato que OurFamilyWizard y las apps líderes.</p>
     <div class="card" style="border:2px solid var(--teal-500)">
       <div style="font-weight:800;font-size:16px">Plan anual <span class="badge green" style="margin-left:6px">2 meses gratis</span></div>
       <div style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:2px">${PRECIOS.anual} <span style="font-size:13px;font-weight:600;color:var(--slate)">CLP / año</span></div>
-      <div class="hint">Por cada padre · el mejor valor</div>
+      <div class="hint">Para toda la familia · el mejor valor</div>
       <button class="btn block" style="margin-top:10px" onclick="irAFlow('anual')">Suscribirme al plan anual</button>
     </div>
     <div class="card">
       <div style="font-weight:800;font-size:16px">Plan mensual</div>
       <div style="font-size:28px;font-weight:800;letter-spacing:-.02em;margin-top:2px">${PRECIOS.mensual} <span style="font-size:13px;font-weight:600;color:var(--slate)">CLP / mes</span></div>
-      <div class="hint">Por cada padre · cancela cuando quieras</div>
+      <div class="hint">Para toda la familia · sin cobro automático</div>
       <button class="btn block ghost" style="margin-top:10px" onclick="irAFlow('mensual')">Suscribirme al plan mensual</button>
     </div>
     ${(!CLOUD && dias === null) ? `<button class="btn block outline" onclick="iniciarPrueba()" style="margin-top:4px">Comenzar 30 días gratis</button>` : ''}
@@ -1924,7 +1959,7 @@ Object.assign(window, {
   go, renderAuth, calMove, modalDia, modalEvento, delEvento, modalEsquema, modalGasto, saldar, saldarTodo,
   modalHijo, modalHijoVer, delHijo, modalDoc, delDoc, modalAjustes, closeSheet, exportarMensajes, cerrarSesion,
   modalProponerSwap, acceptSwap, rejectSwap, suavizarMensaje, exportarGastosCSV,
-  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota, reenviarVerificacion, alternarTema, setTema,
+  modalPlanes, iniciarPrueba, irAFlow, modalBitacora, modalNota, delNota, reenviarVerificacion, alternarTema,
   verImagen, verImagenDoc, verReciboGasto, verImagenMensaje,
   modalAbono, delAbono, exportarGastosPDF, exportarMensajesPDF,
   modalCambiarClave, modalActividad, modalCalendario, copiarTexto, viewGastos, viewMensajes,
@@ -1935,5 +1970,5 @@ Object.assign(window, {
   modalOverride, delOverride, modalRecurrente, delRecurrente,
   modalAcuerdos, modalAcuerdoNuevo, aceptarAcuerdo, delAcuerdo,
   modalLista, addLista, toggleLista, delLista, mostrarTour, cerrarTour,
-  modalEspacios, cambiarEspacio, nuevoEspacio,
+  modalInforme, exportarInformeLegal,
 });

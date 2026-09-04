@@ -36,7 +36,7 @@ export async function migrate() {
   CREATE TABLE IF NOT EXISTS families (
     id           TEXT PRIMARY KEY,
     invite_code  TEXT UNIQUE NOT NULL,
-    currency     TEXT DEFAULT 'MXN',
+    currency     TEXT DEFAULT 'CLP',
     schedule     JSONB DEFAULT '{"type":"2-2-3","start":null,"startParent":"A"}',
     parents      JSONB DEFAULT '{}',   -- { A: "nombre", B: "nombre" }
     created_at   TIMESTAMPTZ DEFAULT now()
@@ -64,24 +64,6 @@ export async function migrate() {
   await entity('agreements',`data JSONB NOT NULL`);  // acuerdos de coparentalidad (confirman ambos)
   await entity('shopping',  `data JSONB NOT NULL`);  // lista compartida de necesidades de los niños
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS reminder_days INTEGER DEFAULT 1;`);
-
-  // Membresías: un usuario puede pertenecer a varios espacios (coparentalidades).
-  await q(`
-  CREATE TABLE IF NOT EXISTS memberships (
-    id         TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL,
-    family_id  TEXT NOT NULL,
-    role       TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE (user_id, family_id)
-  );`);
-  // Backfill: crea la membresía de cada usuario existente a partir de su familia actual.
-  await q(`INSERT INTO memberships (id, user_id, family_id, role)
-    SELECT id || '-' || family_id, id, family_id, role FROM users
-    WHERE family_id IS NOT NULL AND role IS NOT NULL
-    ON CONFLICT (user_id, family_id) DO NOTHING;`);
-  await q(`CREATE INDEX IF NOT EXISTS idx_mem_user ON memberships(user_id);`);
-
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS cal_token TEXT;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS last_custody_reminder TEXT;`);
   await q(`
@@ -122,6 +104,9 @@ export async function migrate() {
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS trial_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_until TIMESTAMPTZ;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_plan TEXT;`);
+  // Control de avisos de vencimiento (guardan el premium_until al que ya se avisó, para no repetir).
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_pre_notice TEXT;`);
+  await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS premium_post_notice TEXT;`);
   // Familias creadas antes de existir la prueba: se les otorga 30 días desde ahora
   // para que no queden bloqueadas al desplegar esta versión.
   await q(`UPDATE families SET trial_until=$1 WHERE trial_until IS NULL`,
@@ -155,7 +140,7 @@ export async function migrate() {
 
 /* Exporta TODAS las tablas (respaldo completo de la base). */
 export async function exportAll() {
-  const tablas = ['families', 'users', 'memberships', 'kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'messages', 'audit', 'payments', 'push_subs'];
+  const tablas = ['families', 'users', 'kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs'];
   const data = { generado: new Date().toISOString(), version: 1, tablas: {} };
   for (const t of tablas) {
     try { data.tablas[t] = (await q(`SELECT * FROM ${t}`)).rows; }

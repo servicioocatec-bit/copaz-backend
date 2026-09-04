@@ -260,3 +260,10 @@ a { color:var(--teal-700); }
   .fab { right:calc((100vw - var(--sidebar-w) - 840px) / 2 + 8px); }
 }
 .hidden { display:none !important; }
+
+/* Checkbox de opciones (informe, etc.) */
+.chk { display:flex; align-items:center; gap:9px; padding:9px 4px; font-size:14px; color:var(--ink,#0f172a); cursor:pointer; }
+.chk input { width:18px; height:18px; accent-color:var(--teal-600,#0d9488); flex:0 0 auto; }
+
+/* Ocultar la interfaz al imprimir un informe (por si el navegador imprime la app en vez del reporte) */
+@media print { #nav, .nav, #modal-root, .fab, #toast-root { display:none !important; } }
