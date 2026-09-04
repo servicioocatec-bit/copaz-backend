@@ -1,6 +1,16 @@
 # 🛠️ Cambios aplicados a Copaz
 
-Resumen de las correcciones y mejoras. Pruebas en verde: **backend 84/84** y **frontend 15/15** (jsdom).
+Resumen de las correcciones y mejoras. Pruebas en verde: **backend 86/86** y **frontend 15/15** (jsdom).
+
+## 📈 Tercera tanda (lo que pude cerrar solo)
+
+- **📊 Métricas de negocio en el admin.** Nuevo `GET /api/admin/stats` + tarjeta en `admin.html`: familias, premium, en prueba, bloqueadas, % de conversión, % de familias con los dos padres, registros de 7/30 días, ingresos de 30 días y totales, pagos confirmados/pendientes.
+- **🔒 Respaldo cifrado.** Si defines `BACKUP_PASSPHRASE`, el respaldo diario viaja por correo cifrado con AES-256-GCM (protege los datos de menores). Se descifra con `node backend/descifrar-respaldo.mjs archivo.json.enc "frase"`.
+- **🔎 SEO + redes sociales.** Landing e `index` con Open Graph / Twitter Card + JSON-LD (para que al compartir el link salga tarjeta con imagen), `robots.txt` y `sitemap.xml`. **Ojo:** cambia la URL base de esos archivos por tu dominio final cuando lo tengas.
+
+> Pendiente que necesita tu cuenta: **object storage** para las imágenes (mueve las fotos fuera de Postgres). No lo dejé a medias porque sin tu bucket no puedo probar la subida real; lo hacemos juntos cuando tengas las credenciales (R2/S3). El **dominio** y las **capturas de tienda** también dependen de ti.
+
+---
 
 ## 🚀 Funciones nuevas (segunda tanda)
 

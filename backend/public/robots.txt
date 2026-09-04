@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /admin.html
+
+Sitemap: https://accomplished-prosperity-production-5a5c.up.railway.app/sitemap.xml
