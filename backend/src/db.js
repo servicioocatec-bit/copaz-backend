@@ -63,6 +63,9 @@ export async function migrate() {
   await entity('recurring', `data JSONB NOT NULL`);  // gastos recurrentes (plantillas mensuales)
   await entity('agreements',`data JSONB NOT NULL`);  // acuerdos de coparentalidad (confirman ambos)
   await entity('shopping',  `data JSONB NOT NULL`);  // lista compartida de necesidades de los niños
+  await entity('support',   `data JSONB NOT NULL`);  // pensión de alimentos (pagos mensuales)
+  await entity('handoffs',  `data JSONB NOT NULL`);  // registro de entregas (traspaso físico de los niños)
+  await entity('decisions', `data JSONB NOT NULL`);  // decisiones conjuntas (aprueban/rechazan ambos)
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS reminder_days INTEGER DEFAULT 1;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS cal_token TEXT;`);
   await q(`ALTER TABLE families ADD COLUMN IF NOT EXISTS last_custody_reminder TEXT;`);
@@ -140,7 +143,7 @@ export async function migrate() {
 
 /* Exporta TODAS las tablas (respaldo completo de la base). */
 export async function exportAll() {
-  const tablas = ['families', 'users', 'kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs'];
+  const tablas = ['families', 'users', 'kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'support', 'handoffs', 'decisions', 'messages', 'audit', 'payments', 'push_subs'];
   const data = { generado: new Date().toISOString(), version: 1, tablas: {} };
   for (const t of tablas) {
     try { data.tablas[t] = (await q(`SELECT * FROM ${t}`)).rows; }
@@ -187,6 +190,9 @@ export async function familyState(familyId) {
     recurring: await load('recurring'),
     agreements: await load('agreements'),
     shopping: await load('shopping'),
+    support:   await load('support'),
+    handoffs:  await load('handoffs'),
+    decisions: await load('decisions'),
     messages,
   };
 }

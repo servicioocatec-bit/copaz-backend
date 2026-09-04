@@ -225,6 +225,15 @@ export function buildRouter(broadcast) {
   r.use('/auth', makeIpLimiter(60 * 1000, 40));   // 40 intentos/min de login-registro-reset por IP
   r.use('/pay', makeIpLimiter(60 * 1000, 30));
   r.use('/admin', makeIpLimiter(60 * 1000, 60));
+  // Opcional: restringe el panel admin a ciertas IP (ADMIN_IP_ALLOWLIST="1.2.3.4,5.6.7.8").
+  const ADMIN_IPS = (process.env.ADMIN_IP_ALLOWLIST || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (ADMIN_IPS.length) {
+    r.use('/admin', (req, res, next) => {
+      const ip = (req.ip || '').replace(/^::ffff:/, '');
+      if (ADMIN_IPS.includes(ip)) return next();
+      return res.status(403).json({ error: 'Acceso restringido por IP' });
+    });
+  }
 
   /* ------------------------------ AUTH ------------------------------ */
 
@@ -424,7 +433,7 @@ export function buildRouter(broadcast) {
       famId = u && u.family_id;
     }
     if (!famId) return res.status(404).json({ error: 'Familia no encontrada (envía familyId o email)' });
-    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs']) {
+    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'support', 'handoffs', 'decisions', 'messages', 'audit', 'payments', 'push_subs']) {
       await q(`DELETE FROM ${t} WHERE family_id=$1`, [famId]).catch(() => {});
     }
     await q(`DELETE FROM users WHERE family_id=$1`, [famId]).catch(() => {});
@@ -553,7 +562,7 @@ export function buildRouter(broadcast) {
     const u = (await q(`SELECT password FROM users WHERE id=$1`, [req.user.uid])).rows[0];
     if (!u || !(await compare(pass, u.password))) return res.status(401).json({ error: 'Contraseña incorrecta' });
     const fam = req.user.family_id;
-    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'messages', 'audit', 'payments', 'push_subs']) {
+    for (const t of ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'support', 'handoffs', 'decisions', 'messages', 'audit', 'payments', 'push_subs']) {
       await q(`DELETE FROM ${t} WHERE family_id=$1`, [fam]).catch(() => {});
     }
     await q(`DELETE FROM users WHERE family_id=$1`, [fam]).catch(() => {});
@@ -656,7 +665,7 @@ export function buildRouter(broadcast) {
   });
 
   /* --------------------- CRUD genérico por entidad ------------------ */
-  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping'];
+  const ENTITIES = ['kids', 'events', 'expenses', 'docs', 'swaps', 'journal', 'settlements', 'tasks', 'overrides', 'recurring', 'agreements', 'shopping', 'support', 'handoffs', 'decisions'];
   const guard = (t, res) => { if (!ENTITIES.includes(t)) { res.status(404).json({ error: 'Entidad no válida' }); return false; } return true; };
 
   // Crear
@@ -682,6 +691,18 @@ export function buildRouter(broadcast) {
     } else if (t === 'tasks') {
       nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
         title: 'Nueva tarea', body: `${n} agregó: ${(data.title || '').slice(0, 60)}`, url: './#/tareas', tag: 'tarea',
+      })).catch(() => {});
+    } else if (t === 'support') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Pensión de alimentos', body: `${n} registró un pago${data.month ? ' (' + data.month + ')' : ''}`, url: './#/inicio', tag: 'pension',
+      })).catch(() => {});
+    } else if (t === 'handoffs') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Entrega registrada', body: `${n} registró una entrega de los niños`, url: './#/inicio', tag: 'entrega',
+      })).catch(() => {});
+    } else if (t === 'decisions') {
+      nombreDe(req.user.family_id, req.user.role).then(n => sendPush(req.user.family_id, req.user.role, {
+        title: 'Decisión por aprobar', body: `${n} propone: ${(data.title || '').slice(0, 60)}`, url: './#/inicio', tag: 'decision',
       })).catch(() => {});
     }
     logAudit(req.user.family_id, req.user.role, 'crear', `${t}: ${data.title || data.name || data.text || ''}`);
@@ -715,6 +736,16 @@ export function buildRouter(broadcast) {
   r.get('/audit', requireAuth, async (req, res) => {
     const rows = (await q(`SELECT actor, action, detail, ts FROM audit WHERE family_id=$1 ORDER BY ts DESC LIMIT 100`, [req.user.family_id])).rows;
     res.json({ audit: rows });
+  });
+
+  // Descargar mis datos: exporta todo el estado de la familia (portabilidad de datos).
+  r.get('/export', requireAuth, async (req, res) => {
+    const state = await familyState(req.user.family_id);
+    if (!state) return res.status(404).json({ error: 'Familia no encontrada' });
+    const fecha = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="copaz-mis-datos-${fecha}.json"`);
+    res.send(JSON.stringify({ exportado: new Date().toISOString(), ...state }, null, 2));
   });
 
   // Cambiar contraseña desde Ajustes (con la contraseña actual).

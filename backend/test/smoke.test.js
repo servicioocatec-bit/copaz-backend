@@ -199,6 +199,26 @@ try {
   r = await api('GET', '/api/state', null, tokenB);
   ok(r.body.overrides.length === 1 && r.body.recurring.length === 1 && r.body.agreements.length === 1 && r.body.shopping.length === 1, 'Las nuevas entidades se sincronizan');
 
+  // 19b-2. Módulos nuevos: pensión de alimentos, entregas y decisiones conjuntas
+  r = await api('POST', '/api/support', { month: '2026-08', amount: 250000, paid: true, paidDate: '2026-08-05', method: 'Transferencia', note: 'Agosto' }, tokenA);
+  ok(r.status === 200 && r.body.id, 'Registra pago de pensión de alimentos');
+  const supportId = r.body.id;
+  r = await api('POST', '/api/handoffs', { date: '2026-08-15', time: '19:00', from: 'A', to: 'B', note: 'Entrega en el colegio' }, tokenA);
+  ok(r.status === 200 && r.body.id, 'Registra una entrega de los niños');
+  r = await api('POST', '/api/decisions', { title: 'Viaje de fin de año', detail: 'Autorizar salida a la playa', proposedBy: 'A', status: 'pending', ts: Date.now() }, tokenA);
+  ok(r.status === 200 && r.body.id, 'Propone una decisión conjunta');
+  const decisionId = r.body.id;
+  r = await api('PATCH', '/api/decisions/' + decisionId, { title: 'Viaje de fin de año', detail: 'Autorizar salida a la playa', proposedBy: 'A', status: 'approved', decidedBy: 'B', decidedAt: Date.now() }, tokenB);
+  ok(r.status === 200, 'El otro padre aprueba la decisión');
+  r = await api('PATCH', '/api/support/' + supportId, { month: '2026-08', amount: 250000, paid: true, note: 'Agosto (editado)' }, tokenB);
+  ok(r.status === 200, 'Edita el pago de pensión');
+  r = await api('GET', '/api/state', null, tokenB);
+  ok(r.body.support.length === 1 && r.body.handoffs.length === 1 && r.body.decisions.length === 1 && r.body.decisions[0].status === 'approved', 'Pensión, entregas y decisiones se sincronizan');
+
+  // 19b-3. Descargar mis datos (portabilidad)
+  r = await api('GET', '/api/export', null, tokenA);
+  ok(r.status === 200 && r.body.family && Array.isArray(r.body.support), 'Exporta todos mis datos');
+
   // 19c. Recordatorios configurables
   r = await api('PATCH', '/api/family', { reminderDays: 3 }, tokenA);
   ok(r.status === 200, 'Actualiza días de aviso de recordatorio');

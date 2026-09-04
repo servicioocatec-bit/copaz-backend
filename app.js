@@ -1062,6 +1062,9 @@ function modalInforme() {
     <label class="chk"><input type="checkbox" id="inf-cust" checked> Resumen de custodia (noches por cada padre)</label>
     <label class="chk"><input type="checkbox" id="inf-msg" checked> Historial de mensajes</label>
     <label class="chk"><input type="checkbox" id="inf-gas" checked> Gastos y reembolsos</label>
+    <label class="chk"><input type="checkbox" id="inf-pen" checked> Pensión de alimentos</label>
+    <label class="chk"><input type="checkbox" id="inf-ent" checked> Registro de entregas</label>
+    <label class="chk"><input type="checkbox" id="inf-dec" checked> Decisiones conjuntas</label>
     <label class="chk"><input type="checkbox" id="inf-bit" checked> Bitácora</label>
     ${CLOUD ? `<label class="chk"><input type="checkbox" id="inf-act" checked> Registro de actividad (auditoría)</label>` : ''}
     <button class="btn block" id="inf-go" style="margin-top:12px">📄 Generar informe (PDF)</button>
@@ -1071,6 +1074,7 @@ function modalInforme() {
     if (!d1 || !d2 || d1 > d2) return toast('Revisa el rango de fechas');
     await exportarInformeLegal(d1, d2, {
       cust: $('#inf-cust').checked, msg: $('#inf-msg').checked, gas: $('#inf-gas').checked,
+      pen: $('#inf-pen').checked, ent: $('#inf-ent').checked, dec: $('#inf-dec').checked,
       bit: $('#inf-bit').checked, act: !!($('#inf-act') && $('#inf-act').checked),
     });
   });
@@ -1121,6 +1125,33 @@ async function exportarInformeLegal(desde, hasta, opts) {
       ${(gastos.length || abonos.length) ? `<table><tr><th>Fecha</th><th>Concepto</th><th>Categoría</th><th>Pagó</th><th style="text-align:right">Monto</th><th>Saldado</th></tr>${gRows}${aRows}</table>` : '<p class="mut">Sin gastos en el período.</p>'}`;
   }
 
+  // --- Pensión de alimentos ---
+  if (opts.pen) {
+    const pagos = [...(D().support || [])].filter(p => enRango((p.month || '') + '-01') || enRango(p.paidDate || '')).sort((a, b) => String(a.month || '').localeCompare(String(b.month || '')));
+    const totalPag = pagos.filter(p => p.paid).reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const rows = pagos.map(p => `<tr><td>${esc(mesLargo(p.month))}</td><td style="text-align:right">${money(p.amount)}</td><td>${p.paid ? 'Pagada' : 'Pendiente'}</td><td>${p.paid && p.paidDate ? fLarga(p.paidDate) : '—'}</td><td>${esc(p.method || '')}</td></tr>`).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">Pensión de alimentos <span class="mut">(${pagos.length})</span></h2>
+      <p class="mut">Total pagado en el período: <b>${money(totalPag)}</b>.</p>
+      ${pagos.length ? `<table><tr><th>Mes</th><th style="text-align:right">Monto</th><th>Estado</th><th>Fecha de pago</th><th>Medio</th></tr>${rows}</table>` : '<p class="mut">Sin registros de pensión en el período.</p>'}`;
+  }
+
+  // --- Registro de entregas ---
+  if (opts.ent) {
+    const ents = [...(D().handoffs || [])].filter(h => enRango(h.date)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const rows = ents.map(h => `<tr><td style="white-space:nowrap">${fLarga(h.date)}${h.time ? ' ' + esc(h.time) : ''}</td><td>${esc(nombre(h.from))} → ${esc(nombre(h.to))}</td><td>${esc(h.note || '')}</td></tr>`).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">Registro de entregas <span class="mut">(${ents.length})</span></h2>
+      ${ents.length ? `<table><tr><th>Fecha y hora</th><th>Entrega</th><th>Nota</th></tr>${rows}</table>` : '<p class="mut">Sin entregas registradas en el período.</p>'}`;
+  }
+
+  // --- Decisiones conjuntas ---
+  if (opts.dec) {
+    const decs = [...(D().decisions || [])].filter(d => enRango(iso(new Date(d.ts || Date.now())))).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const estado = (s) => s === 'approved' ? 'Aprobada' : s === 'rejected' ? 'Rechazada' : 'Pendiente';
+    const rows = decs.map(d => `<tr><td style="white-space:nowrap">${fLarga(iso(new Date(d.ts || Date.now())))}</td><td>${esc(d.title)}${d.detail ? ' — ' + esc(d.detail) : ''}</td><td>${esc(nombre(d.proposedBy))}</td><td>${estado(d.status)}${d.decidedBy ? ' (' + esc(nombre(d.decidedBy)) + ')' : ''}</td></tr>`).join('');
+    cuerpo += `<h2 style="color:#0f766e;font-size:16px;margin-top:24px">Decisiones conjuntas <span class="mut">(${decs.length})</span></h2>
+      ${decs.length ? `<table><tr><th>Fecha</th><th>Decisión</th><th>Propuesta por</th><th>Estado</th></tr>${rows}</table>` : '<p class="mut">Sin decisiones registradas en el período.</p>'}`;
+  }
+
   // --- Bitácora ---
   if (opts.bit) {
     const notas = [...(D().journal || [])].filter(j => enRango(j.date)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -1145,6 +1176,163 @@ async function exportarInformeLegal(desde, hasta, opts) {
   closeSheet();
   imprimirReporte('Informe de coparentalidad', cuerpo);
 }
+
+/* ==================== PENSIÓN DE ALIMENTOS ==================== */
+/* Registro mensual de pagos de pensión. Cada registro:
+   { month:'YYYY-MM', amount, paid, paidDate, method, note, ts }. */
+const mesActual = () => today().slice(0, 7);
+const mesLargo = (ym) => { const [y, m] = String(ym || '').split('-').map(Number); return (MESES[(m || 1) - 1] || '') + ' ' + (y || ''); };
+function pensionEstado() {
+  const list = D().support || [];
+  const delMes = list.find(p => p.month === mesActual());
+  if (delMes && delMes.paid) return { txt: 'Al día', cls: 'green' };
+  if (delMes && !delMes.paid) return { txt: 'Pendiente este mes', cls: 'amber' };
+  return { txt: 'Sin registrar este mes', cls: 'gray' };
+}
+function modalPension() {
+  const list = [...(D().support || [])].sort((a, b) => String(b.month || '').localeCompare(String(a.month || '')));
+  const est = pensionEstado();
+  const filas = list.length ? list.map(p => `<div class="list-row">
+      <div class="avatar" style="background:${p.paid ? '#16a34a' : '#f59e0b'}">${p.paid ? '✓' : '•'}</div>
+      <div class="body"><div class="t">${esc(mesLargo(p.month))} · ${money(p.amount)} ${p.paid ? '<span class="badge green">pagada</span>' : '<span class="badge amber">pendiente</span>'}</div>
+        <div class="s">${p.paid && p.paidDate ? 'Pagada el ' + fechaLarga(p.paidDate) : 'Sin pagar'}${p.method ? ' · ' + esc(p.method) : ''}${p.note ? ' · ' + esc(p.note) : ''}</div></div>
+      <div style="display:flex;gap:4px">
+        <button class="btn sm ghost" onclick="togglePensionPagada('${p.id}')">${p.paid ? '↺' : '✓'}</button>
+        <button class="btn sm ghost" onclick="delPension('${p.id}')">✕</button></div></div>`).join('')
+    : '<div class="empty"><div class="ic">💳</div><p>Aún no registras pagos de pensión.</p></div>';
+  openSheet('Pensión de alimentos 💳', `
+    <div class="card tight" style="margin-bottom:12px;background:var(--teal-50);border-color:var(--teal-200)">
+      <div style="font-size:13px;color:var(--teal-800)">Estado del mes: <b>${est.txt}</b></div></div>
+    <button class="btn block" onclick="nuevaPension()" style="margin-bottom:12px">＋ Registrar pago</button>
+    ${filas}
+    <p class="hint" style="margin-top:10px">Lleva el control de la pensión mes a mes. Queda en el informe para tribunal.</p>`);
+}
+function nuevaPension() {
+  const sugerido = localStorage.getItem('copaz.pensionMonto') || '';
+  openSheet('Registrar pago de pensión', `
+    <div class="row2"><div class="field"><label>Mes</label><input id="pn-mes" type="month" value="${mesActual()}"></div>
+      <div class="field"><label>Monto</label><input id="pn-monto" type="number" inputmode="decimal" placeholder="0" value="${esc(sugerido)}"></div></div>
+    <label class="chk"><input type="checkbox" id="pn-pagada" checked> Ya está pagada</label>
+    <div class="row2"><div class="field"><label>Fecha de pago</label><input id="pn-fecha" type="date" value="${today()}"></div>
+      <div class="field"><label>Medio</label><input id="pn-medio" placeholder="Transferencia, efectivo…"></div></div>
+    <div class="field"><label>Nota (opcional)</label><input id="pn-nota" placeholder="Comentario"></div>
+    <button class="btn block" id="pn-save">Guardar</button>`);
+  $('#pn-save').onclick = () => act(async () => {
+    const amount = parseFloat($('#pn-monto').value); if (!amount || amount <= 0) return toast('Escribe un monto válido');
+    const month = $('#pn-mes').value || mesActual();
+    const paid = $('#pn-pagada').checked;
+    localStorage.setItem('copaz.pensionMonto', String(amount));
+    await Store.create('support', { month, amount, paid, paidDate: paid ? $('#pn-fecha').value : '', method: $('#pn-medio').value.trim(), note: $('#pn-nota').value.trim(), by: meRole(), ts: Date.now() });
+    closeSheet(); render(); modalPension(); toast('Pago registrado ✓');
+  });
+}
+const togglePensionPagada = (id) => act(async () => {
+  const p = (D().support || []).find(x => x.id === id); if (!p) return;
+  await Store.update('support', id, { ...p, paid: !p.paid, paidDate: !p.paid ? today() : '' });
+  render(); modalPension();
+});
+const delPension = (id) => act(async () => { if (!confirm('¿Eliminar este registro de pensión?')) return; await Store.remove('support', id); render(); modalPension(); toast('Registro eliminado'); });
+
+/* ==================== REGISTRO DE ENTREGAS ==================== */
+/* Traspaso físico de los niños. { date, time, from, to, note, ts }. */
+function modalEntregas() {
+  const list = [...(D().handoffs || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const filas = list.length ? list.map(h => `<div class="list-row">
+      <div class="avatar" style="background:${color(h.from)}">↦</div>
+      <div class="body"><div class="t">${esc(nombre(h.from))} → ${esc(nombre(h.to))}</div>
+        <div class="s">${h.date ? fechaLarga(h.date) : ''}${h.time ? ' · ' + esc(h.time) : ''}${h.note ? ' · ' + esc(h.note) : ''}</div></div>
+      <button class="btn sm ghost" onclick="delEntrega('${h.id}')">✕</button></div>`).join('')
+    : '<div class="empty"><div class="ic">🤝</div><p>Aún no hay entregas registradas.</p></div>';
+  openSheet('Registro de entregas 🤝', `
+    <button class="btn block" onclick="nuevaEntrega()" style="margin-bottom:12px">＋ Confirmar una entrega</button>
+    ${filas}
+    <p class="hint" style="margin-top:10px">Deja constancia de cuándo y quién entregó a los niños. Útil como respaldo objetivo.</p>`);
+}
+function nuevaEntrega() {
+  const de = custodioDe(today()) || meRole();
+  openSheet('Confirmar entrega', `
+    <p class="hint" style="margin-bottom:10px">Registra el traspaso de los niños de un padre al otro.</p>
+    <div class="field"><label>¿Quién entrega?</label><div class="seg" id="hf-from">
+      <button data-v="A" class="${de==='A'?'on':''}">${esc(nombre('A'))}</button><button data-v="B" class="${de==='B'?'on':''}">${esc(nombre('B'))}</button></div></div>
+    <div class="row2"><div class="field"><label>Fecha</label><input id="hf-date" type="date" value="${today()}"></div>
+      <div class="field"><label>Hora</label><input id="hf-time" type="time" value="${new Date().toTimeString().slice(0,5)}"></div></div>
+    <div class="field"><label>Nota (opcional)</label><input id="hf-note" placeholder="Lugar, novedades…"></div>
+    <button class="btn block" id="hf-save">Registrar entrega</button>`);
+  segBind('#hf-from');
+  $('#hf-save').onclick = () => act(async () => {
+    const from = segVal('#hf-from') || 'A', to = from === 'A' ? 'B' : 'A';
+    await Store.create('handoffs', { from, to, date: $('#hf-date').value, time: $('#hf-time').value, note: $('#hf-note').value.trim(), by: meRole(), ts: Date.now() });
+    closeSheet(); render(); modalEntregas(); toast('Entrega registrada ✓');
+  });
+}
+const delEntrega = (id) => act(async () => { if (!confirm('¿Eliminar esta entrega?')) return; await Store.remove('handoffs', id); render(); modalEntregas(); toast('Entrega eliminada'); });
+
+/* ==================== DECISIONES CONJUNTAS ==================== */
+/* { title, detail, proposedBy, status:'pending'|'approved'|'rejected', decidedBy, decidedAt, ts }. */
+function modalDecisiones() {
+  const list = [...(D().decisions || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  const badge = (s) => s === 'approved' ? '<span class="badge green">aprobada</span>' : s === 'rejected' ? '<span class="badge rose">rechazada</span>' : '<span class="badge amber">pendiente</span>';
+  const filas = list.length ? list.map(d => {
+    const mia = d.proposedBy === meRole();
+    const acciones = (d.status === 'pending' && !mia)
+      ? `<div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" onclick="resolverDecision('${d.id}','approved')">✓ Aprobar</button>
+         <button class="btn sm ghost" onclick="resolverDecision('${d.id}','rejected')">✕ Rechazar</button></div>`
+      : (d.status === 'pending' && mia) ? '<div class="hint" style="margin-top:6px">Esperando la respuesta del otro padre…</div>' : '';
+    return `<div class="card tight" style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:700">${esc(d.title)}</div>${badge(d.status)}</div>
+      ${d.detail ? `<div style="font-size:13.5px;color:var(--slate);margin-top:4px">${esc(d.detail)}</div>` : ''}
+      <div class="hint" style="margin-top:6px">Propuesta por ${esc(nombre(d.proposedBy))}${d.status !== 'pending' && d.decidedBy ? ' · ' + (d.status === 'approved' ? 'aprobada' : 'rechazada') + ' por ' + esc(nombre(d.decidedBy)) : ''}</div>
+      ${acciones}
+      ${mia ? `<button class="btn sm ghost" onclick="delDecision('${d.id}')" style="margin-top:6px">Eliminar</button>` : ''}</div>`;
+  }).join('') : '<div class="empty"><div class="ic">🤔</div><p>No hay decisiones registradas.</p></div>';
+  openSheet('Decisiones conjuntas 🤝', `
+    <button class="btn block" onclick="nuevaDecision()" style="margin-bottom:12px">＋ Proponer una decisión</button>
+    ${filas}
+    <p class="hint" style="margin-top:10px">Para decisiones importantes que ambos deben aprobar (viajes, gastos médicos, cambios de colegio). Queda registrado con fecha.</p>`);
+}
+function nuevaDecision() {
+  openSheet('Proponer una decisión', `
+    <div class="field"><label>¿Qué se decide?</label><input id="dc-title" placeholder="Ej: Viaje a la playa en enero"></div>
+    <div class="field"><label>Detalle (opcional)</label><textarea id="dc-detail" rows="3" placeholder="Explica la propuesta"></textarea></div>
+    <button class="btn block" id="dc-save">Enviar propuesta</button>`);
+  $('#dc-save').onclick = () => act(async () => {
+    const title = $('#dc-title').value.trim(); if (!title) return toast('Escribe qué se decide');
+    await Store.create('decisions', { title, detail: $('#dc-detail').value.trim(), proposedBy: meRole(), status: 'pending', decidedBy: '', decidedAt: 0, ts: Date.now() });
+    closeSheet(); render(); modalDecisiones(); toast('Propuesta enviada ✓');
+  });
+}
+const resolverDecision = (id, status) => act(async () => {
+  const d = (D().decisions || []).find(x => x.id === id); if (!d) return;
+  await Store.update('decisions', id, { ...d, status, decidedBy: meRole(), decidedAt: Date.now() });
+  render(); modalDecisiones(); toast(status === 'approved' ? 'Aprobada ✓' : 'Rechazada');
+});
+const delDecision = (id) => act(async () => { if (!confirm('¿Eliminar esta decisión?')) return; await Store.remove('decisions', id); render(); modalDecisiones(); toast('Decisión eliminada'); });
+
+/* ==================== DESCARGAR MIS DATOS ==================== */
+function descargarMisDatos() {
+  if (!CLOUD) {
+    const blob = new Blob([JSON.stringify({ exportado: new Date().toISOString(), ...D() }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'copaz-mis-datos-' + today() + '.json'; a.click(); URL.revokeObjectURL(a.href);
+    return toast('Datos descargados');
+  }
+  act(async () => {
+    const res = await fetch(API_BASE + '/api/export', { headers: { Authorization: 'Bearer ' + Cloud.token } });
+    if (!res.ok) throw new Error('No se pudo exportar');
+    const blob = await res.blob();
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = 'copaz-mis-datos-' + today() + '.json'; a.click(); URL.revokeObjectURL(a.href);
+    toast('Datos descargados ✓');
+  });
+}
+function invitarWhatsApp() {
+  const code = (F() && F().inviteCode) || '';
+  if (!code) return toast('Aún no hay código de invitación');
+  const url = location.origin + (location.pathname.replace(/[^/]*$/, '') || '/');
+  const msg = `Te invito a *Copaz* para organizar en paz todo lo de nuestros hijos: calendario de custodia, gastos, mensajes y más.\n\n1) Entra a ${url}\n2) Crea tu cuenta\n3) Únete con el código: *${code}*`;
+  window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+}
+
 const saldar = (id) => act(async () => { const e = D().expenses.find(x => x.id === id); if (e) { await Store.update('expenses', id, { ...e, settled: true }); render(); toast('Marcado como saldado'); } });
 const saldarTodo = () => act(async () => { for (const e of D().expenses.filter(x => !x.settled)) await Store.update('expenses', e.id, { ...e, settled: true }); render(); toast('Todo saldado ✓'); });
 
@@ -1592,7 +1780,8 @@ function modalAjustes() {
   const f = F(), inviteRow = CLOUD ? `
     ${f.inviteCode ? `<div class="card tight" style="margin-bottom:14px"><div style="font-size:12px;color:var(--slate);text-transform:uppercase;letter-spacing:.05em">Código de invitación</div>
       <div style="font-size:24px;font-weight:800;letter-spacing:.12em;color:var(--teal-700)">${esc(f.inviteCode)}</div>
-      <div class="hint">Compártelo con el otro padre para que se una.</div></div>` : ''}
+      <div class="hint">Compártelo con el otro padre para que se una.</div>
+      <button class="btn block" style="margin-top:10px;background:#25d366" onclick="invitarWhatsApp()">💬 Invitar por WhatsApp</button></div>` : ''}
     <button class="btn block ghost" onclick="enablePush(true)" style="margin-bottom:6px">🔔 Activar notificaciones</button>
     <div class="hint" style="margin-bottom:10px">📱 En iPhone las notificaciones funcionan solo si agregas Copaz a la pantalla de inicio (Compartir → “Agregar a inicio”), con iOS 16.4 o superior.</div>
     <button class="btn block outline" onclick="cerrarSesion()" style="margin-bottom:10px">Cerrar sesión</button>` : '';
@@ -1607,12 +1796,16 @@ function modalAjustes() {
     <button class="btn block" id="st-save">Guardar ajustes</button>
     <button class="btn block coral" onclick="modalPlanes()" style="margin-top:10px">✨ Planes y suscripción</button>
     <button class="btn block outline" onclick="modalInforme()" style="margin-top:10px">📄 Informe para abogado/tribunal</button>
+    <button class="btn block outline" onclick="modalPension()" style="margin-top:10px">💳 Pensión de alimentos</button>
+    <button class="btn block outline" onclick="modalEntregas()" style="margin-top:10px">🤝 Registro de entregas</button>
+    <button class="btn block outline" onclick="modalDecisiones()" style="margin-top:10px">🧩 Decisiones conjuntas</button>
     <button class="btn block outline" onclick="alternarTema()" style="margin-top:10px">${localStorage.getItem('copaz.theme') === 'dark' ? '☀️ Modo claro' : '🌙 Modo oscuro'}</button>
     ${CLOUD ? `<button class="btn block outline" onclick="modalAcuerdos()" style="margin-top:10px">🤝 Acuerdos de coparentalidad</button>
     <button class="btn block outline" onclick="modalLista()" style="margin-top:10px">🛒 Lista de necesidades</button>
     <button class="btn block outline" onclick="modalCambiarClave()" style="margin-top:10px">🔑 Cambiar contraseña</button>
     <button class="btn block outline" onclick="modalActividad()" style="margin-top:10px">🕘 Actividad reciente</button>
     <button class="btn block outline" onclick="modalCalendario()" style="margin-top:10px">📆 Suscribir calendario</button>` : ''}
+    <button class="btn block outline" onclick="descargarMisDatos()" style="margin-top:10px">⬇️ Descargar mis datos</button>
     <button class="btn block outline" onclick="mostrarTour(true)" style="margin-top:10px">👋 Ver guía de bienvenida</button>
     <button class="btn block outline" onclick="modalAyuda()" style="margin-top:10px">❓ Ayuda y soporte</button>
     ${inviteRow}
@@ -1789,7 +1982,11 @@ function modalAyuda() {
     ['¿Cómo funciona el pago?', 'Tienes 30 días gratis. Luego, desde “Planes y suscripción” pagas con Flow (mensual o anual). El Premium se activa solo al confirmarse el pago y te llega un recibo por correo.'],
     ['¿Puedo cancelar o eliminar mis datos?', 'El cobro no es automático: si no renuevas, simplemente se vence. Puedes borrar toda tu cuenta y datos en Ajustes → “Eliminar mi cuenta”.'],
     ['¿Es privado?', 'Solo tú y el otro padre/madre vinculado ven la información de su familia. Nadie más tiene acceso.'],
-    ['¿Puedo generar un informe para mi abogado o el tribunal?', 'Sí. En Ajustes → “📄 Informe para abogado/tribunal” eliges un período y generas un PDF con el resumen de custodia (noches por cada padre), los mensajes, los gastos, la bitácora y el registro de actividad. Los mensajes son un registro inmutable.'],
+    ['¿Puedo generar un informe para mi abogado o el tribunal?', 'Sí. En Ajustes → “📄 Informe para abogado/tribunal” eliges un período y generas un PDF con el resumen de custodia (noches por cada padre), los mensajes, los gastos, la pensión, las entregas, las decisiones, la bitácora y el registro de actividad. Los mensajes son un registro inmutable.'],
+    ['¿Cómo llevo el control de la pensión de alimentos?', 'En Ajustes → “💳 Pensión de alimentos” registras cada pago mensual (monto, fecha, medio) y ves si estás al día. Todo queda en el informe para tribunal.'],
+    ['¿Qué es el registro de entregas?', 'En Ajustes → “🤝 Registro de entregas” dejas constancia de cuándo y quién entregó a los niños. Sirve como respaldo objetivo y evita malentendidos.'],
+    ['¿Y las decisiones conjuntas?', 'En “🧩 Decisiones conjuntas” uno propone algo importante (un viaje, un gasto médico, cambio de colegio) y el otro lo aprueba o rechaza. Queda registrado con fecha y quién decidió.'],
+    ['¿Puedo descargar mis datos?', 'Sí, en Ajustes → “⬇️ Descargar mis datos” bajas un archivo con toda la información de tu familia.'],
   ];
   openSheet('Ayuda y soporte ❓', `
     ${faqs.map(([q, a]) => `<details style="border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px">
@@ -1971,4 +2168,8 @@ Object.assign(window, {
   modalAcuerdos, modalAcuerdoNuevo, aceptarAcuerdo, delAcuerdo,
   modalLista, addLista, toggleLista, delLista, mostrarTour, cerrarTour,
   modalInforme, exportarInformeLegal,
+  modalPension, nuevaPension, togglePensionPagada, delPension,
+  modalEntregas, nuevaEntrega, delEntrega,
+  modalDecisiones, nuevaDecision, resolverDecision, delDecision,
+  descargarMisDatos, invitarWhatsApp,
 });

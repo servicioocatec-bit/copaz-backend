@@ -1,6 +1,21 @@
 # 🛠️ Cambios aplicados a Copaz
 
-Resumen de las correcciones y mejoras de esta revisión. El smoke test del backend sigue en verde (77/77).
+Resumen de las correcciones y mejoras. Pruebas en verde: **backend 84/84** y **frontend 15/15** (jsdom).
+
+## 🚀 Funciones nuevas (segunda tanda)
+
+- **💳 Pensión de alimentos.** Control mensual de pagos (monto, fecha, medio, estado al día/pendiente). Entra en el informe para tribunal. (Ajustes → Pensión de alimentos)
+- **🤝 Registro de entregas.** Deja constancia de cuándo y quién entregó a los niños; respaldo objetivo ante conflictos. (Ajustes → Registro de entregas)
+- **🧩 Decisiones conjuntas.** Uno propone (viaje, gasto médico, cambio de colegio) y el otro aprueba/rechaza, con fecha y autor. (Ajustes → Decisiones conjuntas)
+- **💬 Invitar por WhatsApp.** Botón que arma el mensaje con el link de la app y el código de invitación (baja la fricción de que entre el segundo padre).
+- **⬇️ Descargar mis datos.** Portabilidad: exporta todo el estado de la familia en JSON (endpoint `GET /api/export`).
+- **🔒 Allowlist de IP para el admin.** Opcional con `ADMIN_IP_ALLOWLIST`.
+- **📄 Informe ampliado.** Ahora el informe para tribunal incluye también pensión, entregas y decisiones, además de custodia/mensajes/gastos/bitácora/actividad.
+- Se corrigieron dos bugs latentes: el respaldo (`exportAll`) y el borrado de familia dejaban fuera varias tablas (overrides, recurring, agreements, shopping); ahora incluyen todas.
+
+---
+
+## Primera tanda
 
 ## Correcciones
 
